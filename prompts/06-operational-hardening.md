@@ -1,0 +1,54 @@
+# Stage 06: Operational Hardening
+
+## Objective
+Make Team Memory deployable and operable: container image, Helm chart for Kubernetes (MicroK8s first), PostgreSQL backup and restore proof, observability, load tests against the stated targets, and a staged rollout with rollback.
+
+## Context
+Team Memory is an open-source Go MCP service plus embedding worker on PostgreSQL 17 + pgvector (see `proposal.md`). Initial deployment target: the author's MicroK8s cluster with Traefik ingress and a private Tailscale-reachable hostname; the repo itself must stay generic (placeholder hostnames like `memory.example.com`). Initial sizing assumptions (not measured): API 2 replicas, 250m CPU / 256Mi each; worker 1 replica, 250m / 256Mi; dedicated Postgres storage. Initial engineering targets to validate: search p95 < 500 ms (warm, excluding query embedding), write p95 < 300 ms (excluding async embedding), RPO 15 min, RTO 2 h, 99.9% availability target.
+
+## Inputs
+- `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
+- `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
+- `proposal.md`, `docs/handoff/04-security.md`, `docs/handoff/05-portal.md` (attach) and earlier handoffs as needed. Ask if missing.
+- The code repo (default `/Users/tyler/Documents/projects/memory/team-memory-service/`).
+- `docs/decisions/mirror-security.md` from stage 04, and from the user the private git remote(s) to use for the mirror (a throwaway local bare repo is fine for tests; do not push to any real remote without explicit confirmation).
+- From the user, if deploying to a real cluster: kubeconfig context name, ingress class, storage class, and Ollama endpoint. Do not assume access; do not deploy to any real cluster without explicit user confirmation in this session.
+
+## Work
+1. **Image:** multi-stage `Dockerfile` (non-root, minimal base, health check), one image for server, worker, and migrate binaries. Pin base image versions; document how.
+2. **Helm chart** `deploy/helm/team-memory/`: Deployments for API and worker, migration Job (pre-upgrade hook), Service, Ingress (Traefik-compatible but configurable), ConfigMap/Secret references (no secrets in values defaults), resource requests/limits, PodDisruptionBudget, NetworkPolicies (restrictive ingress/egress, allowing required DNS, Postgres, IdP, embedding, mirror-remote, backup and telemetry traffic according to component needs), securityContext hardening, readiness/liveness probes. Support an external PostgreSQL by default; document an in-cluster option (e.g. an operator such as CloudNativePG) as a choice with tradeoffs rather than silently embedding one.
+3. **Backups:** WAL archiving plus base backups with a documented tool choice; schedule; a **restore drill** into a scratch database proving data integrity and measuring restore time against RPO/RTO. Record real measured numbers.
+3a. **Git mirror (one-way, PostgreSQL stays the source of truth):** implement the `git_mirror` job kind in the worker, following `docs/decisions/mirror-security.md` from stage 04.
+   - Use the go-git library (https://github.com/go-git/go-git) for all git operations (clone/open, worktree writes, commit, push), so the image needs no `git` binary and no shelling out. Pin the version, confirm its license is compatible with Apache 2.0, and record the choice in `docs/decisions/git-library.md`. The author has used go-git before and confirms it supports what the mirror needs (authenticated push over SSH deploy key and HTTPS token, commits with a custom author), so do not re-research that; test local bare-repo semantics and separately exercise authenticated SSH and HTTPS against disposable local git servers. A filesystem remote alone cannot prove either authentication path. Include non-fast-forward push rejection. Note any limitations found (for example performance on large repos, unsupported features) and how the design works around them. Keep git access behind a small internal interface (`internal/mirror`) so the library can be swapped.
+   - Each exportable event becomes a commit in the owning scope's private mirror repo, as `memories/<kind>/<memory-id>.md` with frontmatter (event_id, id, revision, kind, status, trust level, source_uri, author, approver, timestamps) and the content and rationale as the body. Commit author is the event actor's principal (display name plus a no-reply address, never real emails unless configured); preserve the content author separately in frontmatter; the commit message states the action (create, update, supersede, approve, archive) and revision.
+   - Idempotent per event and repository, with writes/pushes serialized per repository: retries, including after push success followed by acknowledgement failure, must not create duplicate commits. Export the event-bound historical snapshot; record commit SHA and delivery state in `mirror_state`. Push failures retry then dead-letter like embedding jobs; the service keeps working if the git remote is down.
+   - Credentials: a deploy key or token supplied via Kubernetes Secret, scoped to the mirror repos only, never logged. Direct repository access is limited to trusted deployment operators and the worker. Document operator access/credential rotation; do not grant git access based on application scope membership.
+   - Promotion is exported as a commit in the destination scope's repo (with `promoted_from` pointing at the source scope, memory id, and revision) and a supersession commit in the source scope's repo; the two exports are independent jobs and each is idempotent, and `verify-mirror` understands promoted and overridden memories.
+   - Provide a `verify-mirror` command that compares the database against the repo and reports drift. Document that the mirror is read-only by convention: edits made in git are not imported and are overwritten or flagged on the next export.
+   - Document rollback: to undo a change, create a new revision or supersede via the service; git history is for review and disaster recovery only. Include a documented procedure (and test it once) to rebuild a project's memories from the mirror after total database loss, as an explicit disaster-recovery exception to the no-import rule, using a manual script that does not restore authoritative approvals from mirror metadata, noting its limits (for example embeddings, audit log, and approvals records are not in git).
+4. **Observability:** `/healthz`, `/readyz`, Prometheus metrics (request counts/latency by tool, job queue depth, job failures/dead letters, embedding latency, DB pool), OpenTelemetry tracing with request IDs propagated into logs and audit events. Provide example alerts (queue backlog, dead letters, readiness failing, disk usage).
+5. **Resilience:** graceful shutdown, DB connection pooling settings, worker retry/dead-letter operations runbook (how to inspect and replay dead letters).
+6. **Load testing:** build a repeatable load test (k6 or Go) for search and write paths, plus portal page loads and scope-tree navigation on a deep tree with many scopes and members (RLS over the hierarchy is the likely hotspot), at stated dataset sizes and concurrency; report p50/p95/p99 against the targets with the hardware used. Report misses honestly; do not tune the numbers to pass without saying how.
+7. **Rollout and rollback:** documented staged rollout (dev → private cluster → wider use) and a tested rollback including a migration policy (forward-only vs. reversible; how to handle a bad migration).
+8. **Authentication deployment guide** (`docs/operations/authentication.md`) and matching Helm values: Kubernetes Secrets for each upstream IdP (client ID, client secret), the token-signing key, and the mirror credentials, all created **before** any user signs in. Document the order of operations (create Secrets, set values, deploy, check readiness, run CLI `init` once to establish the owner, sign in as that existing owner and explicitly link SSO if configured, then onboard users), both solo mode (personal access token, no IdP) and team mode (upstream OIDC), step-by-step recipes for at least Keycloak and one hosted IdP (e.g. Google or Entra) including the redirect URI to register, allowed-domain and group-mapping settings, SAML via a broker, secret rotation without downtime, and troubleshooting a not-ready server. Include the portal's session secret, cookie and base-path settings, and ingress rules (portal and `/mcp` on one hostname or two). Support referencing existing Secrets (`existingSecret`) and external secret operators; never put secret values in `values.yaml` defaults.
+9. **Runbooks** in `docs/operations/`: deploy, upgrade, backup/restore, rotate secrets, replay dead letters, incident basics, and exceptional secret purge covering database, embeddings, jobs, mirror history, backup retention and restored copies as specified in `review-decisions.md`.
+
+## Excluded
+New product features; client verification (stage 07); public release.
+
+## Deliverables
+`Dockerfile`, `internal/mirror`, mirror verification/recovery tooling and tests, `docs/decisions/git-library.md`, Helm chart with `values.yaml` and a README, backup configuration and restore-drill report, dashboards/alerts examples, load-test scripts and report (`docs/operations/load-test-report.md`), runbooks, `docs/handoff/06-operations.md`.
+
+## Acceptance criteria
+- `helm lint` and `helm template` succeed; a deploy to a local or disposable cluster (e.g. kind or the user's MicroK8s only after explicit confirmation) reaches ready state and passes a smoke test through the ingress.
+- go-git is the only git implementation used (no `exec` of `git` anywhere in the service; checked by a grep or lint rule), and `docs/decisions/git-library.md` records the pinned version, license check, and any limits found.
+- Creating, updating, approving, and superseding a memory each produce one correct commit in a test mirror repo; a forced push failure retries without duplicates; `verify-mirror` reports no drift afterward and detects a deliberately introduced one.
+- A restore drill succeeded with measured duration and recovery point documented.
+- Metrics and traces visible for a sample workload; alerts example validated syntactically.
+- Load-test report shows measured percentiles versus the targets, with environment details and any misses.
+- Rollback was exercised once and documented.
+- No secrets in the chart, image, or repo (verified with a scan).
+- Following `docs/operations/authentication.md` literally on a disposable cluster, a solo deployment and an SSO deployment (Keycloak as upstream) both reach a working sign-in; removing the IdP Secret makes readiness fail with the documented message.
+
+## Handoff
+`docs/handoff/06-operations.md`: deployed topology, measured numbers, gaps against targets, and what stage 07 needs (final hostname/URL placeholders, how to obtain tokens for testing).
