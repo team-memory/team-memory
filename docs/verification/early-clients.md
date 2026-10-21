@@ -44,13 +44,43 @@ The database afterwards held exactly these two memories, each with one `created`
 | Client | `Mcp-Protocol-Version` | Calls observed |
 | --- | --- | --- |
 | Claude Code 2.1.292 | 2026-07-28 | `server/discover`, `tools/list`, `resources/list`, `subscriptions/listen` |
-| Codex 0.163.0 | 2025-06-18 | legacy `initialize`, then tool calls |
+| Codex 0.163.0 | 2025-06-18 | Methods not visible: before the 2026-10-21 logging fix, these requests were logged with an empty method. The 2025-06-18 version came from the header. The legacy handshake was inferred from that version, not seen in the log. The 2026-10-21 run logged `initialize`, `notifications/initialized`, `tools/list`, `tools/call`. |
 
 The server must therefore keep supporting both protocol generations (see `docs/decisions/mcp-sdk.md`).
 
+## Re-verification (2026-10-21)
+
+Same machine, client versions and server setup as above, using a separate 4-hour PAT (`smoke-2`) that was revoked afterwards. This run covered the steps of the acceptance path not run on 2026-10-20. Create and keyword search rely on the earlier run.
+
+The Claude Code run allowed these tools:
+
+```bash
+TM_TOKEN=... claude -p --mcp-config claude-mcp.json --strict-mcp-config \
+  --allowedTools "mcp__team-memory__memory_get,mcp__team-memory__memory_update,mcp__team-memory__memory_history,ReadMcpResourceTool,ListMcpResourcesTool" \
+  "<prompt>" < /dev/null
+```
+
+Codex used the same command as above.
+
+| Direction | Steps | Observed | Result |
+| --- | --- | --- | --- |
+| Claude Code | `memory_get`, then `memory_update` on the Codex-created `70783a3e-…` with `expected_revision` 1 | Revision 2, trust stays `unverified` | Pass |
+| Claude Code | `memory_update` again with stale `expected_revision` 1 | `conflict`, `current_revision` 2 | Pass |
+| Claude Code | `memory_history`; `resources/read` of `memory://scopes/acme/smoke/recent` | Revisions 1 and 2, events `created` and `revised`; the resource lists both memories, `inherited: false` | Pass |
+| Codex | `memory_history` and the same resource | Both revisions with the Claude Code change note and appended sentence; the resource shows `70783a3e-…` at revision 2 | Pass |
+| Codex | `memory_recent` | Both ids returned; the server log shows `initialize`, `notifications/initialized`, `tools/list`, `tools/call` | Pass |
+
+**Missing `memory_recent` call explained.** The earlier version-capture run passed `--allowedTools` with only create, search and get. In `-p` mode, Claude Code denies any other tool before it sends a request, so the server never received a `tools/call`. Reproduced: with the 2026-10-20 `--allowedTools` list above, the command reports `permission_denials: [mcp__team-memory__memory_recent]`, and the server sees only discovery and listing. With the tool allowed, the log shows `tools/call`. It was not a server issue.
+
+**Logging fix.** The request log took the method only from the `Mcp-Method` header. Only 2026-07-28 clients send that header, so every Codex (2025-06-18) request was logged with an empty method. Now, when the header is missing, `logRequests` falls back to the JSON-RPC `method` member:
+- It records the first 64 KiB of the body as the handler reads it, after authentication, and does not read ahead. Rejected requests still get an immediate 401, with no `100 Continue`, and log an empty method.
+- It scans top-level keys in order, so large requests are still identified when `method` precedes the cut.
+- It logs no body content.
+
+The code is in `cmd/team-memory/main.go`, tested in `main_test.go`. Confirmed against a running server: an authenticated header-less `initialize` logged `initialize`, and an unauthenticated `Expect: 100-continue` POST got 401 directly.
+
 ## Observations and gaps
 
-- In the version-capture run, the Claude Code log line set showed discovery and listing but no `tools/call` entry for the `memory_recent` request. Tool calls by Claude Code were confirmed in the two direction tests above, through the returned ids, which match the database. This was not investigated further.
 - Codex logged unrelated errors refreshing its model list from the author's configured model proxy. They did not affect MCP calls.
-- Only `memory_create`, `memory_search`, `memory_get` and `memory_recent` were exercised by real clients. The remaining tools are covered by the SDK-client protocol test (`integration/mcp_test.go`), not by these two clients.
-- Not tested: OAuth (stage 03), resources from the real clients, Windows/Linux clients, and other machines.
+- Real clients have now exercised `memory_create`, `memory_search`, `memory_get`, `memory_update` (including the stale-revision conflict), `memory_history`, `memory_recent` and one resource. `memory_supersede` and `memory_approve` are covered only by the SDK-client protocol test (`integration/mcp_test.go`).
+- Not tested: OAuth (stage 03), Windows/Linux clients, and other machines.

@@ -10,8 +10,8 @@ The Go service, schema, memory engine, PAT authentication, MCP adapter, tests, C
 
 | Criterion | Evidence | Result |
 | --- | --- | --- |
-| `make test` passes, including integration tests against real Postgres | `make test` (`go test -race -count=1 ./...`), 12 integration tests + 5 unit tests, PostgreSQL 17 + pgvector 0.8.1 | Pass |
-| MCP client: initialize, list tools, create, update, stale-revision conflict, keyword search, history with both revisions | `integration/mcp_test.go` (official go-sdk client, both protocol 2025-11-25 `initialize` and 2026-07-28 `server/discover`); real clients exercised create/search/get (plus discovery and listing) | Pass (see note 1) |
+| `make test` passes, including integration tests against real Postgres | `make test` (`go test -race -count=1 ./...`), 12 integration tests + 7 unit tests, PostgreSQL 17 + pgvector 0.8.1 | Pass |
+| MCP client: initialize, list tools, create, update, stale-revision conflict, keyword search, history with both revisions | `integration/mcp_test.go` (official go-sdk client, both protocol 2025-11-25 `initialize` and 2026-07-28 `server/discover`); real clients also exercised every step across two runs (create/search/get on 2026-10-20; update, stale-revision conflict and history on 2026-10-21) | Pass (see notes 1 and 2) |
 | Revision rows cannot be modified or deleted | `TestRevisionsImmutable`: UPDATE, DELETE and TRUNCATE rejected by triggers; the same test covers events, audit, overrides, approvals, the closure table and scopes | Pass |
 | Scope-tree tests (three levels + sibling project) | `TestScopeInheritance`, `TestInheritedMemoriesReadOnlyFromDescendants`, `TestTreeRules`, `TestOverridesAreModeledButDoNotHide` | Pass |
 | Token after `init` works; missing/invalid/revoked/expired tokens rejected; no unauthenticated mode | `TestInitAndTokens`, `TestMCPRequiresAuthentication`; init rerun refuses and keeps the owner | Pass |
@@ -23,7 +23,7 @@ The Go service, schema, memory engine, PAT authentication, MCP adapter, tests, C
 Notes:
 
 1. The spec changed since the prompt was written. MCP 2026-07-28 removed `initialize`. "Initialize" is satisfied by the legacy handshake for older clients and `server/discover` for current ones, and both are tested.
-2. The smoke test passed in both directions. In a later run used only to capture protocol versions, the server log showed no `tools/call` from Claude Code. This was not investigated (details in the verification note).
+2. The smoke test passed in both directions. On 2026-10-21, a re-verification covered the steps the first run missed. Claude Code ran update, the stale-revision conflict, history and a resource read. Codex then read the history, the resource and `memory_recent`. Create and keyword search rely on the 2026-10-20 run. The earlier missing Claude Code `tools/call` came from the test command's `--allowedTools` list, not from the server (details in the verification note).
 
 ## Schema changes vs the draft, and why
 
@@ -68,7 +68,9 @@ The local dev database currently holds the smoke-test organization `acme` (proje
 ## Skipped or not verified
 
 - The CI workflow has not run (no push yet). Action versions `actions/checkout@v5` and `actions/setup-go@v6` are assumed to be current.
-- Real clients exercised only create/search/get (Claude Code also called discovery and listing; its `memory_recent` call was not seen in the log). The full tool surface is covered by the SDK protocol test.
+- Real clients have not exercised `memory_supersede` or `memory_approve`. The SDK protocol test covers them. Every other tool and one resource were exercised by at least one real client. `memory_update` was run only by Claude Code.
+- The request log now records the JSON-RPC method for clients that send no `Mcp-Method` header (Codex on 2025-06-18). It reads the method from the body after authentication, without reading ahead. Before this fix, those requests were logged with an empty method. Requests rejected before their body is read still log an empty method.
+- Pre-existing, not fixed: the HTTP server sets only `ReadHeaderTimeout`, with no `ReadTimeout` or `IdleTimeout`, so a slow client can hold a connection open. The `Mcp-Method` and `User-Agent` headers are logged with no length cap. Both are candidates for stage 06 hardening.
 - No secret scanning yet. The proposal requires it before export and promotion. Not in the stage 01 list, so it is an open item for stage 04.
 - No Helm chart, metrics, tracing or worker (later stages, per the prompt's exclusions).
 - `audit_events` gets rows for memory and membership mutations, but reads, denials and authentication failures are not audited yet.

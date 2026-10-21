@@ -6,10 +6,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -165,12 +168,78 @@ func (r *statusRecorder) Flush() {
 func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		mcpMethod := r.Header.Get("Mcp-Method")
+		var captured *prefixCapture
+		inner := r
+		if mcpMethod == "" && r.Method == http.MethodPost && r.Body != nil && r.Body != http.NoBody {
+			// Clients before protocol 2026-07-28 send no Mcp-Method header.
+			// Record the body prefix as the handler reads it (after
+			// authentication), rather than reading ahead. A shallow copy
+			// keeps the server's own view of r.Body unchanged.
+			captured = &prefixCapture{ReadCloser: r.Body}
+			inner = r.WithContext(r.Context())
+			inner.Body = captured
+		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		next.ServeHTTP(rec, inner)
+		if captured != nil {
+			mcpMethod = jsonRPCMethod(captured.buf.Bytes())
+		}
 		logger.Info("request", "method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"mcp_protocol_version", r.Header.Get("Mcp-Protocol-Version"), "mcp_method", r.Header.Get("Mcp-Method"),
+			"mcp_protocol_version", r.Header.Get("Mcp-Protocol-Version"), "mcp_method", mcpMethod,
 			"user_agent", r.UserAgent(), "duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// prefixCaptureLimit bounds how much of a request body is kept for finding
+// the JSON-RPC method.
+const prefixCaptureLimit = 64 << 10
+
+// prefixCapture passes reads through and keeps the first
+// prefixCaptureLimit bytes that were read.
+type prefixCapture struct {
+	io.ReadCloser
+	buf bytes.Buffer
+}
+
+func (c *prefixCapture) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	if room := prefixCaptureLimit - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(n, room)])
+	}
+	return n, err
+}
+
+// jsonRPCMethod returns the "method" member of a JSON-RPC request object,
+// scanning top-level keys in order so a truncated prefix still yields the
+// method when it precedes the cut. Keys match exactly. It returns "" for
+// anything else, including batches and non-string or overlong methods.
+func jsonRPCMethod(prefix []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(prefix))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return ""
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, _ := tok.(string)
+		if key != "method" {
+			var skip json.RawMessage
+			if dec.Decode(&skip) != nil {
+				return ""
+			}
+			continue
+		}
+		tok, err = dec.Token()
+		method, ok := tok.(string)
+		if err != nil || !ok || len(method) > 64 {
+			return ""
+		}
+		return method
+	}
+	return ""
 }
 
 func initCmd(ctx context.Context, args []string) error {
