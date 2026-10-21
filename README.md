@@ -2,7 +2,7 @@
 
 A self-hosted, permission-aware shared memory for developers and their AI coding agents, served over MCP (Model Context Protocol).
 
-> **Status: early development (stage 02 of 7).** Not production-ready. There is no OAuth/SSO, no row-level security, no approval workflow, and no web portal yet. See `proposal.md` for the plan and `docs/handoff/` for progress.
+> **Status: early development (stage 03 of 7).** Not production-ready. OAuth/SSO is a working prototype whose sign-in state lives in memory (single replica only). There is no row-level security, no approval workflow, and no web portal yet. See `proposal.md` for the plan and `docs/handoff/` for progress.
 
 This repository holds both the service code and the planning material (`proposal.md`, `review-decisions.md`, `prompts/`).
 
@@ -14,6 +14,7 @@ This repository holds both the service code and the planning material (`proposal
 - Durable embedding jobs: a transactional outbox in PostgreSQL and a worker with retries, backoff and dead-lettering. Embeddings come from a local Ollama.
 - MCP over Streamable HTTP with eight tools and four resource views. Serves protocol 2026-07-28 and older clients that use the `initialize` handshake.
 - Personal access tokens: shown once, stored hashed, with expiry and revocation. There is no unauthenticated mode.
+- Optional SSO (prototype): Team Memory acts as the OAuth 2.1 authorization server for MCP clients and delegates sign-in to any OpenID Connect provider you configure. It issues its own short-lived tokens for the `/mcp` endpoint. Claude Code and Codex sign in with no client-side setup. See `docs/decisions/identity-provider.md`.
 
 ## Quickstart (local)
 
@@ -97,6 +98,26 @@ The worker embeds new revisions and backfills existing memories at startup. Chec
 
 To add another embedding model, use `team-memory embeddings add-model --name <model>`. See `docs/decisions/embedding-models.md`.
 
+### Single sign-on (optional)
+
+Solo use needs no identity provider: `init` and a personal access token are enough. To let people sign in with an OpenID Connect provider (Keycloak, Entra ID, Okta, Google, Authentik, Dex, and others; SAML through a broker such as Keycloak or Dex), register Team Memory at the IdP as a confidential client with the redirect URI `https://memory.example.com/oauth/callback/<provider-id>`, then point `TEAM_MEMORY_SSO_CONFIG` at a JSON file. The file and Kubernetes Secret layout are described in `docs/decisions/identity-provider.md`.
+
+```bash
+TEAM_MEMORY_PUBLIC_URL=https://memory.example.com TEAM_MEMORY_SSO_CONFIG=/etc/team-memory/sso/sso.json ./bin/team-memory serve
+```
+
+Clients then add the server by URL only and sign in through their own OAuth flow:
+
+```bash
+claude mcp add --transport http team-memory https://memory.example.com/mcp
+```
+
+```bash
+codex mcp add team_memory --url https://memory.example.com/mcp && codex mcp login team_memory
+```
+
+If SSO is configured but its configuration or secrets are missing or invalid, the server reports not ready at `/readyz` and refuses every request with 503 until it is fixed. A first SSO sign-in creates a principal with no roles; grant roles with `member add`. To try SSO locally, see `deploy/dev-idp/README.md`.
+
 ## Scopes, members and tokens (operator CLI)
 
 These commands act directly on the database. Authorized administration through the API arrives in stage 04.
@@ -108,7 +129,11 @@ These commands act directly on the database. Authorized administration through t
 ./bin/team-memory member add --scope acme/platform --principal <id> --role writer --cascade
 ./bin/team-memory token create --principal <id> --ttl 720h
 ./bin/team-memory token revoke <token-id>
+./bin/team-memory principal identities --principal <id>
+./bin/team-memory principal link-identity --principal <id> --issuer <iss> --subject <sub>
 ```
+
+`link-identity` is for operator recovery only. It attaches an upstream identity, given as the exact `iss` and `sub`, never an email, to an existing principal. It refuses an identity that is already linked to someone else.
 
 Grants on a scope apply to that scope only, unless `--cascade` extends them to all descendants. Anyone who can read a scope also sees its ancestors' memories, read-only.
 
@@ -132,7 +157,7 @@ make test
 
 Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`, `make worker`, `make eval` (retrieval evaluation against a real model, see `docs/eval/retrieval-report.md`) and `make bench-vector` (vector index benchmark).
 
-Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `docs/`.
+Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap, identity mapping), `internal/auth/oauth` (authorization server facade), `internal/server` (HTTP assembly and readiness), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `docs/`.
 
 ## License
 

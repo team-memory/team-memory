@@ -1,0 +1,48 @@
+{
+  "realm": "team-memory-dev",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "team-memory",
+      "name": "Team Memory (local dev)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:8080/oauth/callback/keycloak"],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "-"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Example",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${ALICE_PASSWORD}", "temporary": false }]
+    },
+    {
+      "username": "eve",
+      "email": "eve@evil.test",
+      "emailVerified": true,
+      "firstName": "Eve",
+      "lastName": "Outsider",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "${EVE_PASSWORD}", "temporary": false }]
+    }
+  ]
+}

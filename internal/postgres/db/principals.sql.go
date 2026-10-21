@@ -51,6 +51,30 @@ func (q *Queries) GetPrincipal(ctx context.Context, id uuid.UUID) (Principal, er
 	return i, err
 }
 
+const getPrincipalByIdentity = `-- name: GetPrincipalByIdentity :one
+SELECT p.id, p.kind, p.display_name, p.created_at, p.disabled_at FROM principal_identities i
+JOIN principals p ON p.id = i.principal_id
+WHERE i.issuer = $1 AND i.subject = $2
+`
+
+type GetPrincipalByIdentityParams struct {
+	Issuer  string
+	Subject string
+}
+
+func (q *Queries) GetPrincipalByIdentity(ctx context.Context, arg GetPrincipalByIdentityParams) (Principal, error) {
+	row := q.db.QueryRow(ctx, getPrincipalByIdentity, arg.Issuer, arg.Subject)
+	var i Principal
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.CreatedAt,
+		&i.DisabledAt,
+	)
+	return i, err
+}
+
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
 INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -124,6 +148,26 @@ func (q *Queries) InsertPersonalAccessToken(ctx context.Context, arg InsertPerso
 	return i, err
 }
 
+const insertPrincipalIdentity = `-- name: InsertPrincipalIdentity :execrows
+INSERT INTO principal_identities (principal_id, issuer, subject)
+VALUES ($1, $2, $3)
+ON CONFLICT (issuer, subject) DO NOTHING
+`
+
+type InsertPrincipalIdentityParams struct {
+	PrincipalID uuid.UUID
+	Issuer      string
+	Subject     string
+}
+
+func (q *Queries) InsertPrincipalIdentity(ctx context.Context, arg InsertPrincipalIdentityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertPrincipalIdentity, arg.PrincipalID, arg.Issuer, arg.Subject)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listPersonalAccessTokens = `-- name: ListPersonalAccessTokens :many
 SELECT id, principal_id, name, token_prefix, created_at, expires_at, revoked_at, last_used_at
 FROM personal_access_tokens
@@ -160,6 +204,35 @@ func (q *Queries) ListPersonalAccessTokens(ctx context.Context, principalID uuid
 			&i.ExpiresAt,
 			&i.RevokedAt,
 			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrincipalIdentities = `-- name: ListPrincipalIdentities :many
+SELECT principal_id, issuer, subject, created_at FROM principal_identities WHERE principal_id = $1 ORDER BY created_at
+`
+
+func (q *Queries) ListPrincipalIdentities(ctx context.Context, principalID uuid.UUID) ([]PrincipalIdentity, error) {
+	rows, err := q.db.Query(ctx, listPrincipalIdentities, principalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PrincipalIdentity
+	for rows.Next() {
+		var i PrincipalIdentity
+		if err := rows.Scan(
+			&i.PrincipalID,
+			&i.Issuer,
+			&i.Subject,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -4,7 +4,7 @@ TEST_DATABASE_URL ?= postgres://teammemory:teammemory-dev@127.0.0.1:55432/postgr
 SQLC_VERSION := v1.31.1
 export DATABASE_URL TEST_DATABASE_URL
 
-.PHONY: help db-up db-down migrate run worker build test test-unit eval bench-vector generate check-generate lint
+.PHONY: help db-up db-down migrate run worker build test test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -49,3 +49,10 @@ check-generate: generate ## Fail if generated code is stale
 lint: ## go vet and golangci-lint (if installed)
 	go vet ./...
 	@command -v golangci-lint >/dev/null && golangci-lint run ./... || echo "golangci-lint not installed; skipped"
+
+dev-idp-up: ## Start the disposable Keycloak + Dex stack for SSO development
+	./deploy/dev-idp/setup.sh
+	docker compose -f deploy/dev-idp/compose.yaml up -d --wait
+
+dev-idp-down: ## Stop the dev IdP stack
+	docker compose -f deploy/dev-idp/compose.yaml down

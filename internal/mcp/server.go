@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
@@ -37,7 +38,15 @@ type Options struct {
 	// DefaultScope is used when a tool call names no scope.
 	DefaultScope string
 	Logger       *slog.Logger
+	// ResourceMetadataURL, when set, is advertised in WWW-Authenticate
+	// challenges (RFC 9728) so OAuth clients can discover the authorization
+	// server, together with the required scope.
+	ResourceMetadataURL string
 }
+
+// RequiredScope is the OAuth scope every MCP request needs. Personal access
+// tokens carry it implicitly.
+const RequiredScope = "memory"
 
 // Handler returns the MCP endpoint, wrapped in bearer-token authentication.
 // There is no unauthenticated mode.
@@ -55,6 +64,11 @@ func Handler(svc *memory.Service, srch *search.Service, authn auth.Authenticator
 	})
 	verifier := func(ctx context.Context, token string, _ *http.Request) (*sdkauth.TokenInfo, error) {
 		p, exp, err := authn.Authenticate(ctx, token)
+		if errors.Is(err, auth.ErrInsufficientScope) {
+			// A valid token without the scope: the middleware's scope check
+			// answers 403 insufficient_scope. No principal is attached.
+			return &sdkauth.TokenInfo{Expiration: time.Now().Add(time.Minute)}, nil
+		}
 		if err != nil {
 			if errors.Is(err, auth.ErrInvalidCredential) {
 				return nil, sdkauth.ErrInvalidToken
@@ -63,12 +77,17 @@ func Handler(svc *memory.Service, srch *search.Service, authn auth.Authenticator
 			return nil, err
 		}
 		return &sdkauth.TokenInfo{
+			Scopes:     []string{RequiredScope},
 			UserID:     p.ID.String(),
 			Expiration: exp,
 			Extra:      map[string]any{principalKey: p},
 		}, nil
 	}
-	return sdkauth.RequireBearerToken(verifier, nil)(h)
+	var bearer *sdkauth.RequireBearerTokenOptions
+	if opts.ResourceMetadataURL != "" {
+		bearer = &sdkauth.RequireBearerTokenOptions{ResourceMetadataURL: opts.ResourceMetadataURL, Scopes: []string{RequiredScope}}
+	}
+	return sdkauth.RequireBearerToken(verifier, bearer)(h)
 }
 
 // NewServer builds the MCP server with all tools and resources registered.

@@ -26,10 +26,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/team-memory/team-memory/internal/auth"
-	"github.com/team-memory/team-memory/internal/mcp"
 	"github.com/team-memory/team-memory/internal/memory"
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
+	"github.com/team-memory/team-memory/internal/server"
 )
 
 const usage = `usage: team-memory <command> [flags]
@@ -40,6 +40,8 @@ commands:
   init                          create the first organization, owner and token
   scope create|list|config      manage the scope tree
   principal create|list         manage principals
+  principal identities|link-identity
+                                show or link SSO identities (operator recovery)
   member add|list               grant scope roles (initial bootstrap)
   token create|list|revoke      manage personal access tokens
   worker                        run embedding jobs for the configured model
@@ -48,7 +50,8 @@ commands:
   jobs status|retry-dead        inspect the job queue, requeue dead-lettered jobs
 
 Configuration comes from the environment: DATABASE_URL, TEAM_MEMORY_LISTEN,
-TEAM_MEMORY_DEFAULT_SCOPE, and for retrieval TEAM_MEMORY_OLLAMA_URL,
+TEAM_MEMORY_DEFAULT_SCOPE, TEAM_MEMORY_PUBLIC_URL, TEAM_MEMORY_SSO_CONFIG (enables
+OAuth sign-in through upstream OIDC providers), and for retrieval TEAM_MEMORY_OLLAMA_URL,
 TEAM_MEMORY_EMBEDDING_MODEL and related settings (see README).`
 
 func main() {
@@ -133,22 +136,16 @@ func serve(ctx context.Context, args []string) error {
 				return err
 			}
 		}
-		svc := memory.NewService(pool)
 		srch, err := newSearch(ctx, pool, logger)
 		if err != nil {
 			return err
 		}
-		mux := http.NewServeMux()
-		mux.Handle("/mcp", logRequests(logger, mcp.Handler(svc, srch, auth.NewPATs(pool), mcp.Options{DefaultScope: *defaultScope, Logger: logger})))
-		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-			if err := pool.Ping(r.Context()); err != nil {
-				http.Error(w, "database unavailable", http.StatusServiceUnavailable)
-				return
-			}
-			_, _ = w.Write([]byte("ok\n"))
+		handler := server.New(server.Options{
+			Pool: pool, Search: srch, Logger: logger, DefaultScope: *defaultScope,
+			SSOConfigPath: os.Getenv("TEAM_MEMORY_SSO_CONFIG"), PublicURL: os.Getenv("TEAM_MEMORY_PUBLIC_URL"),
 		})
-		srv := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+		handler.Start(ctx)
+		srv := &http.Server{Addr: *listen, Handler: logRequests(logger, handler), ReadHeaderTimeout: 10 * time.Second}
 		errc := make(chan error, 1)
 		go func() { errc <- srv.ListenAndServe() }()
 		logger.Info("serving", "addr", *listen, "mcp_path", "/mcp")
@@ -179,7 +176,7 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// logRequests logs MCP request metadata. It never logs credentials or bodies.
+// logRequests logs request metadata for MCP and OAuth endpoints. It never logs credentials or bodies.
 func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -350,7 +347,7 @@ func scopeCmd(ctx context.Context, args []string) error {
 
 func principalCmd(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: team-memory principal create|list")
+		return errors.New("usage: team-memory principal create|list|identities|link-identity")
 	}
 	return withPool(ctx, func(pool *pgxpool.Pool) error {
 		q := db.New(pool)
@@ -379,6 +376,40 @@ func principalCmd(ctx context.Context, args []string) error {
 				fmt.Fprintf(w, "%s\t%s\t%s\n", p.ID, p.Kind, p.DisplayName)
 			}
 			return w.Flush()
+		case "identities":
+			fs := flag.NewFlagSet("principal identities", flag.ExitOnError)
+			principal := fs.String("principal", "", "principal id (required)")
+			_ = fs.Parse(args[1:])
+			pid, err := uuid.Parse(*principal)
+			if err != nil {
+				return errors.New("--principal must be a principal id")
+			}
+			rows, err := q.ListPrincipalIdentities(ctx, pid)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "ISSUER\tSUBJECT\tLINKED")
+			for _, r := range rows {
+				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Issuer, r.Subject, r.CreatedAt.Format(time.RFC3339))
+			}
+			return w.Flush()
+		case "link-identity":
+			// Operator recovery only: the operator vouches for both sides.
+			// Users link through the portal, which proves control of both.
+			fs := flag.NewFlagSet("principal link-identity", flag.ExitOnError)
+			principal := fs.String("principal", "", "principal id (required)")
+			issuer := fs.String("issuer", "", "upstream issuer URL, exactly as in its ID tokens (required)")
+			subject := fs.String("subject", "", "upstream subject (sub claim), not an email address (required)")
+			_ = fs.Parse(args[1:])
+			pid, err := uuid.Parse(*principal)
+			if err != nil {
+				return errors.New("--principal must be a principal id")
+			}
+			if err := auth.NewIdentities(pool).Link(ctx, pid, auth.ExternalIdentity{Issuer: *issuer, Subject: *subject}); err != nil {
+				return err
+			}
+			fmt.Println("linked")
 		default:
 			return fmt.Errorf("unknown principal command %q", args[0])
 		}

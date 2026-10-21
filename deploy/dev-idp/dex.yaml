@@ -1,0 +1,21 @@
+# Dex for local development: static client and users, in-memory storage.
+# Secrets and password hashes come from .local/env (setup.sh).
+issuer: http://localhost:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+enablePasswordDB: true
+staticClients:
+  - id: team-memory
+    name: Team Memory (local dev)
+    secretEnv: DEX_CLIENT_SECRET
+    redirectURIs:
+      - http://localhost:8080/oauth/callback/dex
+staticPasswords:
+  - email: bob@example.com
+    username: bob
+    userID: 5b0c7a4e-0f6a-4f0e-9a43-2f0c3a1d9b11
+    hashFromEnv: BOB_PASSWORD_HASH

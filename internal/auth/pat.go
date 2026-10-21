@@ -143,3 +143,22 @@ func (a *PATs) Authenticate(ctx context.Context, credential string) (memory.Prin
 	})
 	return p, exp, err
 }
+
+// ErrInsufficientScope means a valid credential lacks a required scope. The
+// MCP adapter answers it with 403 and an insufficient_scope challenge.
+var ErrInsufficientScope = errors.New("insufficient scope")
+
+// Chain routes a credential to the PAT authenticator when it has the PAT
+// prefix and to the OAuth access-token authenticator otherwise. OAuth may be
+// nil (solo mode): then only PATs are accepted.
+type Chain struct {
+	PATs  Authenticator
+	OAuth Authenticator
+}
+
+func (c Chain) Authenticate(ctx context.Context, credential string) (memory.Principal, time.Time, error) {
+	if strings.HasPrefix(credential, TokenPrefix) || c.OAuth == nil {
+		return c.PATs.Authenticate(ctx, credential)
+	}
+	return c.OAuth.Authenticate(ctx, credential)
+}

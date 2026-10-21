@@ -35,3 +35,16 @@ ORDER BY created_at;
 -- name: InsertAuditEvent :exec
 INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+
+-- name: GetPrincipalByIdentity :one
+SELECT p.* FROM principal_identities i
+JOIN principals p ON p.id = i.principal_id
+WHERE i.issuer = $1 AND i.subject = $2;
+
+-- name: InsertPrincipalIdentity :execrows
+INSERT INTO principal_identities (principal_id, issuer, subject)
+VALUES ($1, $2, $3)
+ON CONFLICT (issuer, subject) DO NOTHING;
+
+-- name: ListPrincipalIdentities :many
+SELECT * FROM principal_identities WHERE principal_id = $1 ORDER BY created_at;
