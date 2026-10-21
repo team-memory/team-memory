@@ -6,7 +6,7 @@ Each prompt in this folder has a defined input bundle and is written for a fresh
 
 | # | File | Depends on | Notes |
 | --- | --- | --- | --- |
-| 1 | `01-foundation.md` | none | Checks alternatives, creates the code repo and early client smoke test. |
+| 1 | `01-foundation.md` | none | Checks alternatives, sets up the service code in this repository and early client smoke test. |
 | 2 | `02-intelligent-retrieval.md` | 01 | Retrieval and evaluation. |
 | 3 | `03-identity-provider-decision.md` | 01 (can run in parallel with 02) | Discovery. Decides and proves the auth architecture (solo tokens plus bring-your-own-SSO). Must finish before 04. |
 | 4 | `04-team-security.md` | 01, 02, 03 | Security and review services. |
@@ -16,17 +16,16 @@ Each prompt in this folder has a defined input bundle and is written for a fresh
 
 ## Where things live
 
-- Planning artifacts (this folder's parent): `/Users/tyler/Documents/projects/memory/team-memory/`
-- Code repository (created in stage 01, default): `/Users/tyler/Documents/projects/memory/team-memory-service/`. Change it if you prefer, then update the path you give each session.
-- Decision records: `team-memory-service/docs/decisions/`
-- Handoff notes: each stage writes `team-memory-service/docs/handoff/NN-<stage>.md`. Attach the previous stage's handoff to the next session.
+- One repository holds everything: `/Users/tyler/Documents/projects/memory/team-memory/` (also reachable as `~/projects/memory/team-memory`). Planning artifacts (`proposal.md`, `review*.md`, `prompts/`) and the service code (`cmd/`, `internal/`, `migrations/`, ...) live side by side at its root.
+- Decision records: `docs/decisions/`
+- Handoff notes: each stage writes `docs/handoff/NN-<stage>.md`. Attach the previous stage's handoff to the next session.
 
 ## What to attach to each session
 
 1. The prompt file for that stage.
 2. `proposal.md` (context and scope) and `review-decisions.md` (accepted security and lifecycle contract).
 3. The previous stage's handoff note (and for 04, also `docs/decisions/identity-provider.md`).
-4. This guide (`prompts/00-start-here.md`), including its global rules, and access to the code repository directory.
+4. This guide (`prompts/00-start-here.md`), including its global rules, and access to the repository.
 
 Use every prerequisite listed in the stage prompt, not only the immediately preceding handoff. All seven stages are required for the agreed v1; extra embedding-model evaluation is conditional on availability. Real deployment and publishing remain separately authorized actions. Stage 03 may run alongside 02 after 01, using isolated changes and reconciling handoffs before 04.
 

@@ -1,0 +1,21 @@
+name: team-memory
+# Local development only. Credentials here are throwaway defaults for a
+# loopback-bound container; never reuse them in a deployment.
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: teammemory
+      POSTGRES_PASSWORD: teammemory-dev
+      POSTGRES_DB: teammemory
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teammemory -d teammemory"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  pgdata:

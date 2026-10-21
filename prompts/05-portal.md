@@ -10,7 +10,7 @@ Team Memory is an open-source Go MCP service on PostgreSQL + pgvector giving AI 
 - `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
 - `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
 - `proposal.md`, `docs/handoff/01-foundation.md`, `docs/handoff/02-retrieval.md`, `docs/handoff/03-identity.md`, `docs/handoff/04-security.md`, `docs/decisions/scope-tree.md`, `docs/decisions/trust-rules.md`, `docs/security/threat-model.md` (attach). Ask for anything missing.
-- The code repo (default `/Users/tyler/Documents/projects/memory/team-memory-service/`).
+- The repository root (`/Users/tyler/Documents/projects/memory/team-memory/`), which holds both the service code and these planning files.
 
 ## Work
 1. **Architecture decision** (`docs/decisions/portal.md`): default to server-rendered HTML with Go templates and htmx (or similarly light progressive enhancement), embedded in the server binary with no separate Node build or extra deployable, unless you find a concrete reason for a SPA; record alternatives and why. The portal calls the same `internal/memory` and `internal/search` services as MCP through a portal adapter (`internal/portal`), never raw SQL, and never bypasses RLS: every request runs in the principal's transaction.

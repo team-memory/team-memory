@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg17
+        env:
+          POSTGRES_USER: teammemory
+          POSTGRES_PASSWORD: teammemory-ci
+          POSTGRES_DB: teammemory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U teammemory"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      CI: "true"
+      TEST_DATABASE_URL: postgres://teammemory:teammemory-ci@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: sqlc generated code is current
+        run: make check-generate
+      - name: Unit and integration tests
+        run: go test -race -count=1 ./...

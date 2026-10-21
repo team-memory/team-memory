@@ -10,7 +10,7 @@ Team Memory is an open-source Go service exposing MCP over Streamable HTTP; clie
 - `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
 - `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
 - `proposal.md`, `docs/handoff/01-foundation.md` (attach).
-- The code repo (default `/Users/tyler/Documents/projects/memory/team-memory-service/`).
+- The repository root (`/Users/tyler/Documents/projects/memory/team-memory/`), which holds both the service code and these planning files.
 - The author has no self-hosted SSO deployed. Use the already-planned disposable local Keycloak setup for discovery; this is not a production IdP selection. Solo PAT mode does not require an IdP. Do not require the author to deploy SSO before development or assume access to a hosted provider.
 
 ## Work

@@ -10,7 +10,7 @@ Team Memory is an open-source Go MCP service plus embedding worker on PostgreSQL
 - `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
 - `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
 - `proposal.md`, `docs/handoff/04-security.md`, `docs/handoff/05-portal.md` (attach) and earlier handoffs as needed. Ask if missing.
-- The code repo (default `/Users/tyler/Documents/projects/memory/team-memory-service/`).
+- The repository root (`/Users/tyler/Documents/projects/memory/team-memory/`), which holds both the service code and these planning files.
 - `docs/decisions/mirror-security.md` from stage 04, and from the user the private git remote(s) to use for the mirror (a throwaway local bare repo is fine for tests; do not push to any real remote without explicit confirmation).
 - From the user, if deploying to a real cluster: kubeconfig context name, ingress class, storage class, and Ollama endpoint. Do not assume access; do not deploy to any real cluster without explicit user confirmation in this session.
 

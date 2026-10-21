@@ -10,7 +10,7 @@ Team Memory is an open-source Go service giving AI agents a shared, versioned, p
 - `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
 - `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
 - `proposal.md` and `docs/handoff/01-foundation.md` (attach). If unavailable, ask the user; do not guess the schema.
-- The code repo (default `/Users/tyler/Documents/projects/memory/team-memory-service/`).
+- The repository root (`/Users/tyler/Documents/projects/memory/team-memory/`), which holds both the service code and these planning files.
 - A reachable Ollama endpoint with an embedding model pulled (ask the user for the URL; use a config variable, never a hardcoded host).
 
 ## Work
