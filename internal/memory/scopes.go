@@ -327,6 +327,13 @@ func visibleScopes(ctx context.Context, q *db.Queries, p Principal, scopeRef str
 	return out, nil
 }
 
+// VisibleScopesTx is visibleScopes for callers that run their own
+// transaction (internal/search). Inside postgres.WithReadTx (repeatable read)
+// the access check and the queries that depend on it share one snapshot.
+func VisibleScopesTx(ctx context.Context, q *db.Queries, p Principal, scopeRef string) ([]VisibleScope, error) {
+	return visibleScopes(ctx, q, p, scopeRef)
+}
+
 // VisibleScopes returns the scopes whose memories are visible from scopeRef:
 // the scope itself plus its ancestors (inherited, read-only). It returns
 // ErrNotFound if the principal cannot read the scope.

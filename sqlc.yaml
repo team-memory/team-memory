@@ -18,6 +18,11 @@ sql:
               import: github.com/google/uuid
               type: UUID
               pointer: true
+          - db_type: vector
+            go_type:
+              import: github.com/pgvector/pgvector-go
+              package: pgvector
+              type: Vector
           - db_type: timestamptz
             go_type: time.Time
           - db_type: timestamptz

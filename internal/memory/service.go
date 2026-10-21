@@ -61,14 +61,6 @@ type ArchiveInput struct {
 	Reason               string
 }
 
-// SearchInput is a full-text query in a scope.
-type SearchInput struct {
-	Scope string
-	Query string
-	Kinds []string
-	Limit int
-}
-
 func jsonBytes(v any) ([]byte, error) {
 	if v == nil {
 		return []byte("{}"), nil
@@ -230,7 +222,9 @@ func insertRevision(ctx context.Context, tx postgres.Tx, m db.Memory, rev int32,
 			return mapDBError(err)
 		}
 	}
-	return nil
+	// Transactional outbox: the embedding job commits or rolls back with the
+	// revision, so no revision is ever left without a job.
+	return tx.Q.EnqueueEmbedJobs(ctx, db.EnqueueEmbedJobsParams{OrgID: m.OrgID, MemoryID: m.ID, Revision: rev})
 }
 
 func createInTx(ctx context.Context, tx postgres.Tx, p Principal, sc db.Scope, c content) (db.Memory, error) {
@@ -689,46 +683,9 @@ func scopeIDs(vs []VisibleScope) ([]uuid.UUID, map[uuid.UUID]bool) {
 	return ids, inherited
 }
 
-// Search runs a full-text query over active memories in the scope and its
-// ancestors. Descendant scopes are never searched.
-func (s *Service) Search(ctx context.Context, p Principal, in SearchInput) ([]SearchResult, error) {
-	in.Query = strings.TrimSpace(in.Query)
-	if err := checkText("query", in.Query, 1, MaxQueryLen); err != nil {
-		return nil, err
-	}
-	kinds, err := parseKinds(in.Kinds)
-	if err != nil {
-		return nil, err
-	}
-	out := []SearchResult{}
-	err = postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
-		vs, err := visibleScopes(ctx, tx.Q, p, in.Scope)
-		if err != nil {
-			return err
-		}
-		ids, inherited := scopeIDs(vs)
-		rows, err := tx.Q.SearchMemories(ctx, db.SearchMemoriesParams{
-			Query: in.Query, ScopeIds: ids, Kinds: kinds, MaxResults: int32(clampLimit(in.Limit)),
-		})
-		if err != nil {
-			return err
-		}
-		for _, r := range rows {
-			out = append(out, SearchResult{
-				ID: r.ID, OriginScope: r.ScopePath, Inherited: inherited[r.ScopeID], Kind: Kind(r.Kind),
-				Status: Status(r.Status), Trust: Trust(r.Trust), Revision: int(r.CurrentRevision),
-				Title: r.Title, Content: r.Content, Rationale: r.Rationale, SourceURI: deref(r.SourceUri),
-				CreatedBy: r.CreatedBy, UpdatedAt: r.UpdatedAt, Rank: r.Rank,
-			})
-		}
-		return nil
-	})
-	return out, err
-}
-
 // Recent lists recently changed active memories in the scope and its ancestors.
 func (s *Service) Recent(ctx context.Context, p Principal, scopeRef string, kinds []string, limit int) ([]SearchResult, error) {
-	ks, err := parseKinds(kinds)
+	ks, err := ParseKinds(kinds)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +697,7 @@ func (s *Service) Recent(ctx context.Context, p Principal, scopeRef string, kind
 		}
 		ids, inherited := scopeIDs(vs)
 		rows, err := tx.Q.RecentMemories(ctx, db.RecentMemoriesParams{
-			ScopeIds: ids, Kinds: ks, MaxResults: int32(clampLimit(limit)),
+			ScopeIds: ids, Kinds: ks, MaxResults: int32(ClampLimit(limit)),
 		})
 		if err != nil {
 			return err

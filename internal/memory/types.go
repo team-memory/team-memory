@@ -139,8 +139,8 @@ type Memory struct {
 	OverrideStatus string      `json:"override_status,omitempty"`
 }
 
-// SearchResult is one hit. Rank is a full-text rank from PostgreSQL
-// (ts_rank_cd); it orders results but is not a calibrated probability.
+// SearchResult is one memory in a listing (recent memories, resources).
+// Ranked search results are produced by internal/search.
 type SearchResult struct {
 	ID          uuid.UUID `json:"id"`
 	OriginScope string    `json:"origin_scope"`
@@ -155,7 +155,6 @@ type SearchResult struct {
 	SourceURI   string    `json:"source_uri,omitempty"`
 	CreatedBy   uuid.UUID `json:"created_by"`
 	UpdatedAt   time.Time `json:"updated_at"`
-	Rank        float32   `json:"rank,omitempty"`
 }
 
 // Revision is an immutable content snapshot.

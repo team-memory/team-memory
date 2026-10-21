@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pgvector/pgvector-go"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 type Approval struct {
@@ -36,6 +36,27 @@ type AuditEvent struct {
 	Details    []byte
 }
 
+type ConflictCandidate struct {
+	OrgID             uuid.UUID
+	ScopeID           uuid.UUID
+	MemoryID          uuid.UUID
+	Revision          int32
+	CandidateScopeID  uuid.UUID
+	CandidateMemoryID uuid.UUID
+	CandidateRevision int32
+	Model             string
+	Similarity        float32
+	Status            string
+	DetectedAt        time.Time
+}
+
+type EmbeddingModel struct {
+	Name       string
+	Dimensions int32
+	Enabled    bool
+	CreatedAt  time.Time
+}
+
 type IdempotencyKey struct {
 	PrincipalID uuid.UUID
 	Key         string
@@ -61,6 +82,7 @@ type Job struct {
 	LastError   *string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	LeaseID     *uuid.UUID
 }
 
 type Memory struct {
@@ -87,7 +109,7 @@ type MemoryEmbedding struct {
 	ScopeID    uuid.UUID
 	Model      string
 	Dimensions int32
-	Embedding  *pgvector.Vector
+	Embedding  pgvector.Vector
 	CreatedAt  time.Time
 }
 

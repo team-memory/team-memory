@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/team-memory/team-memory/internal/auth"
@@ -40,7 +41,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(tmmcp.Handler(tr.svc, auth.NewPATs(tr.pool), tmmcp.Options{}))
+	srv := httptest.NewServer(tmmcp.Handler(tr.svc, tr.search, auth.NewPATs(tr.pool), tmmcp.Options{}))
 	t.Cleanup(srv.Close)
 	return &mcpEnv{url: srv.URL, token: tok.Secret, tr: tr}
 }
@@ -130,17 +131,25 @@ func TestMCPProtocol(t *testing.T) {
 				t.Fatalf("conflict: %v", conflict)
 			}
 
-			found, isErr := call(t, cs, "memory_search", map[string]any{"scope": scope, "query": "PostgreSQL 17"})
+			found, isErr := call(t, cs, "memory_search", map[string]any{"scope": scope, "query": "PostgreSQL 17",
+				"types": []string{"decision"}, "limit": 5, "include_superseded": false, "include_overridden": false})
 			results, _ := found["results"].([]any)
 			hit := false
 			for _, r := range results {
 				m := r.(map[string]any)
-				if m["id"] == id && m["revision"].(float64) == 2 && m["origin_scope"] == scope && m["inherited"] == false {
+				if m["id"] == id && m["revision"].(float64) == 2 && m["origin_scope"] == scope && m["inherited"] == false &&
+					m["precedence"].(float64) == 2 && m["trust"] != nil && m["score"].(float64) > 0 &&
+					m["updated_at"] != nil && len(m["retrievers"].([]any)) > 0 {
 					hit = true
 				}
 			}
-			if isErr || !hit {
+			meta, _ := found["meta"].(map[string]any)
+			if isErr || !hit || meta["mode"] == nil || meta["score_note"] == nil {
 				t.Fatalf("search: %v", found)
+			}
+			if other, _ := call(t, cs, "memory_search", map[string]any{"scope": scope, "query": "PostgreSQL 17",
+				"types": []string{"lesson"}}); len(other["results"].([]any)) != 0 {
+				t.Fatalf("types filter: %v", other)
 			}
 
 			hist, isErr := call(t, cs, "memory_history", map[string]any{"id": id})
@@ -261,5 +270,62 @@ func TestMCPRespectsScopes(t *testing.T) {
 	res, isErr = call(t, cs, "memory_create", map[string]any{"scope": "acme/platform/payments", "kind": "fact", "title": "t", "content": "c"})
 	if e, _ := res["error"].(map[string]any); !isErr || e["code"] != "permission_denied" {
 		t.Fatalf("reader create: %v", res)
+	}
+}
+
+// TestMCPSearchContract exercises memory_search's inputs through the
+// protocol: the project and kinds aliases, include_superseded and
+// include_overridden.
+func TestMCPSearchContract(t *testing.T) {
+	env := newMCPEnv(t)
+	ctx := context.Background()
+	tr := env.tr
+	org := tr.create(t, tr.owner, "acme", "convention", "Logging library", "use zap for structured logging")
+	old := tr.create(t, tr.owner, "acme/platform/payments", "decision", "Queue choice", "payments uses RabbitMQ for refunds")
+	if _, _, err := tr.svc.Supersede(ctx, tr.owner, memory.SupersedeInput{ID: old.ID, ExpectedRevision: 1,
+		Replacement: memory.CreateInput{Title: "Queue choice", Content: "payments uses Kafka for refunds"}}); err != nil {
+		t.Fatal(err)
+	}
+	pay, err := tr.svc.Create(ctx, tr.owner, memory.CreateInput{Scope: "acme/platform/payments", Kind: "convention",
+		Title: "Payments logging", Content: "payments uses slog", Overrides: []uuid.UUID{org.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve(t, tr, pay.ID)
+	cs, err := env.connect(t, env.token, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	find := func(args map[string]any) (map[string]map[string]any, map[string]any) {
+		t.Helper()
+		res, isErr := call(t, cs, "memory_search", args)
+		if isErr {
+			t.Fatalf("memory_search %v: %v", args, res)
+		}
+		out := map[string]map[string]any{}
+		for _, r := range res["results"].([]any) {
+			m := r.(map[string]any)
+			out[m["id"].(string)] = m
+		}
+		return out, res["meta"].(map[string]any)
+	}
+
+	got, _ := find(map[string]any{"project": "acme/platform/payments", "query": "refunds queue", "kinds": []string{"decision"}})
+	if _, ok := got[old.ID.String()]; ok || len(got) != 1 {
+		t.Fatalf("project/kinds aliases or superseded exclusion: %v", got)
+	}
+	got, _ = find(map[string]any{"project": "acme/platform/payments", "query": "refunds queue", "include_superseded": true})
+	if r, ok := got[old.ID.String()]; !ok || r["status"] != "superseded" {
+		t.Fatalf("include_superseded: %v", got)
+	}
+
+	got, meta := find(map[string]any{"scope": "acme/platform/payments", "query": "zap structured logging"})
+	if _, ok := got[org.ID.String()]; ok || meta["overrides_in_effect"].(float64) != 1 {
+		t.Fatalf("approved override not applied: %v %v", got, meta)
+	}
+	got, _ = find(map[string]any{"scope": "acme/platform/payments", "query": "zap structured logging", "include_overridden": true})
+	r, ok := got[org.ID.String()]
+	if by, _ := r["overridden_by"].([]any); !ok || len(by) != 1 || by[0] != pay.ID.String() {
+		t.Fatalf("include_overridden: %v", got)
 	}
 }

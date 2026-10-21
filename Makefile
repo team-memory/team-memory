@@ -4,7 +4,7 @@ TEST_DATABASE_URL ?= postgres://teammemory:teammemory-dev@127.0.0.1:55432/postgr
 SQLC_VERSION := v1.31.1
 export DATABASE_URL TEST_DATABASE_URL
 
-.PHONY: help db-up db-down migrate run build test test-unit generate check-generate lint
+.PHONY: help db-up db-down migrate run worker build test test-unit eval bench-vector generate check-generate lint
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -24,11 +24,21 @@ migrate: build ## Apply migrations to DATABASE_URL
 run: build ## Serve MCP on 127.0.0.1:8080 (applies migrations first)
 	./bin/team-memory serve --migrate
 
+worker: build ## Run the embedding worker (needs TEAM_MEMORY_OLLAMA_URL)
+	./bin/team-memory worker
+
 test-unit: ## Unit tests only (no database)
 	go test ./internal/... ./cmd/...
 
 test: db-up ## Unit and integration tests against real PostgreSQL
 	go test -race -count=1 ./...
+
+eval: db-up ## Retrieval evaluation (needs TEAM_MEMORY_OLLAMA_URL and TEAM_MEMORY_EVAL_MODELS)
+	TEAM_MEMORY_EVAL_OUT=$(CURDIR)/docs/eval go test -count=1 -v -timeout 60m ./integration/eval/
+
+bench-vector: db-up ## Vector index benchmark; TEAM_MEMORY_VECTOR_BENCH=20000,100000 sets sizes
+	TEAM_MEMORY_VECTOR_BENCH=$${TEAM_MEMORY_VECTOR_BENCH:-20000,100000} TEAM_MEMORY_BENCH_OUT=$(CURDIR)/docs/eval/vectorbench-results.json \
+		go test -count=1 -v -timeout 120m ./integration/vectorbench/
 
 generate: ## Regenerate sqlc code
 	go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate

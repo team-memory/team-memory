@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/search"
 )
 
 func strp(s string) *string { return &s }
@@ -51,11 +52,11 @@ func TestLifecycle(t *testing.T) {
 	}
 
 	// Keyword search finds the current revision only.
-	res, err := tr.svc.Search(ctx, writer, memory.SearchInput{Scope: "acme/platform/payments", Query: "refund"})
-	if err != nil || len(res) != 1 || res[0].ID != m.ID || res[0].Revision != 2 {
-		t.Fatalf("search: %v %+v", err, res)
+	res := tr.find(t, writer, search.Input{Scope: "acme/platform/payments", Query: "refund"})
+	if len(res) != 1 || res[0].ID != m.ID || res[0].Revision != 2 {
+		t.Fatalf("search: %+v", res)
 	}
-	if res, _ := tr.svc.Search(ctx, writer, memory.SearchInput{Scope: "acme/platform/payments", Query: "nonexistentword"}); len(res) != 0 {
+	if res := tr.find(t, writer, search.Input{Scope: "acme/platform/payments", Query: "nonexistentword"}); len(res) != 0 {
 		t.Fatalf("unexpected hits: %+v", res)
 	}
 
@@ -97,7 +98,7 @@ func TestLifecycle(t *testing.T) {
 	if _, err := tr.svc.Update(ctx, writer, memory.UpdateInput{ID: m.ID, ExpectedRevision: 2, Title: strp("x")}); !errors.Is(err, memory.ErrNotActive) {
 		t.Fatalf("update superseded: want ErrNotActive, got %v", err)
 	}
-	res, _ = tr.svc.Search(ctx, writer, memory.SearchInput{Scope: "acme/platform/payments", Query: "PostgreSQL"})
+	res = tr.find(t, writer, search.Input{Scope: "acme/platform/payments", Query: "PostgreSQL"})
 	if len(res) != 1 || res[0].ID != repl.ID {
 		t.Fatalf("search after supersede should return only the replacement: %+v", res)
 	}

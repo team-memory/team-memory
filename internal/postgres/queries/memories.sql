@@ -77,24 +77,6 @@ FROM memory_events
 WHERE memory_id = $1
 ORDER BY seq;
 
--- name: SearchMemories :many
--- Full-text search over the current revision of active memories in the given
--- scopes. The caller passes only scopes the principal may read.
-SELECT m.id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.trust,
-       m.current_revision, m.created_by, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri,
-       ts_rank_cd(r.search, q.query)::real AS rank
-FROM memories m
-JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
-JOIN scopes s ON s.id = m.scope_id
-CROSS JOIN websearch_to_tsquery('english', @query::text) AS q(query)
-WHERE m.scope_id = ANY(@scope_ids::uuid[])
-  AND m.status = 'active'
-  AND (cardinality(@kinds::text[]) = 0 OR m.kind = ANY(@kinds::text[]))
-  AND r.search @@ q.query
-ORDER BY rank DESC, m.updated_at DESC, m.id
-LIMIT @max_results;
-
 -- name: RecentMemories :many
 SELECT m.id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.trust,
        m.current_revision, m.created_by, m.updated_at,

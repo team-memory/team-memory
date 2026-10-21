@@ -25,9 +25,12 @@ func WithTx(ctx context.Context, pool *pgxpool.Pool, principal uuid.UUID, fn fun
 	return withTx(ctx, pool, pgx.TxOptions{}, principal, fn)
 }
 
-// WithReadTx is WithTx with a read-only transaction.
+// WithReadTx is WithTx with a read-only REPEATABLE READ transaction: every
+// statement sees one snapshot, so an access check and the queries that depend
+// on it (search candidates, then their rows) cannot observe different states.
+// Read-only transactions at this level never fail with serialization errors.
 func WithReadTx(ctx context.Context, pool *pgxpool.Pool, principal uuid.UUID, fn func(tx Tx) error) error {
-	return withTx(ctx, pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, principal, fn)
+	return withTx(ctx, pool, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead}, principal, fn)
 }
 
 func withTx(ctx context.Context, pool *pgxpool.Pool, opts pgx.TxOptions, principal uuid.UUID, fn func(tx Tx) error) (err error) {

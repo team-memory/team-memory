@@ -42,9 +42,14 @@ commands:
   principal create|list         manage principals
   member add|list               grant scope roles (initial bootstrap)
   token create|list|revoke      manage personal access tokens
+  worker                        run embedding jobs for the configured model
+  embeddings add-model|list|enable|disable
+                                manage embedding models and their indexes
+  jobs status|retry-dead        inspect the job queue, requeue dead-lettered jobs
 
 Configuration comes from the environment: DATABASE_URL, TEAM_MEMORY_LISTEN,
-TEAM_MEMORY_DEFAULT_SCOPE.`
+TEAM_MEMORY_DEFAULT_SCOPE, and for retrieval TEAM_MEMORY_OLLAMA_URL,
+TEAM_MEMORY_EMBEDDING_MODEL and related settings (see README).`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -81,6 +86,12 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return memberCmd(ctx, args)
 	case "token":
 		return tokenCmd(ctx, args)
+	case "worker":
+		return workerCmd(ctx, args)
+	case "embeddings":
+		return embeddingsCmd(ctx, args)
+	case "jobs":
+		return jobsCmd(ctx, args)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
@@ -123,8 +134,12 @@ func serve(ctx context.Context, args []string) error {
 			}
 		}
 		svc := memory.NewService(pool)
+		srch, err := newSearch(ctx, pool, logger)
+		if err != nil {
+			return err
+		}
 		mux := http.NewServeMux()
-		mux.Handle("/mcp", logRequests(logger, mcp.Handler(svc, auth.NewPATs(pool), mcp.Options{DefaultScope: *defaultScope, Logger: logger})))
+		mux.Handle("/mcp", logRequests(logger, mcp.Handler(svc, srch, auth.NewPATs(pool), mcp.Options{DefaultScope: *defaultScope, Logger: logger})))
 		mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 		mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 			if err := pool.Ping(r.Context()); err != nil {

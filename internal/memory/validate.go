@@ -34,7 +34,8 @@ func ParseKind(s string) (Kind, error) {
 	return k, nil
 }
 
-func parseKinds(in []string) ([]string, error) {
+// ParseKinds validates a kind filter; an empty filter means all kinds.
+func ParseKinds(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, s := range in {
 		k, err := ParseKind(s)
@@ -102,7 +103,8 @@ func validLevel(s string) error {
 	return nil
 }
 
-func clampLimit(n int) int {
+// ClampLimit applies the default and maximum result limits.
+func ClampLimit(n int) int {
 	if n <= 0 {
 		return DefaultLimit
 	}

@@ -1,0 +1,386 @@
+{
+  "model": "nomic-embed-text",
+  "dimensions": 768,
+  "memories": 67,
+  "embed_seconds": 4.950467833,
+  "modes": {
+    "fulltext": {
+      "queries": 42,
+      "recall_at_5": 0.893,
+      "mrr_at_10": 0.689,
+      "recall_at_5_by_category": {
+        "acronym": 0.864,
+        "identifier": 1,
+        "paraphrase": 0.882,
+        "repository": 0.8
+      },
+      "mrr_by_category": {
+        "acronym": 0.909,
+        "identifier": 0.889,
+        "paraphrase": 0.523,
+        "repository": 0.412
+      },
+      "misses": [
+        "q11",
+        "q17",
+        "q19",
+        "q25",
+        "q32",
+        "q33"
+      ],
+      "p50_ms": 2.197
+    },
+    "fulltext_stage01_and": {
+      "queries": 42,
+      "recall_at_5": 0.56,
+      "mrr_at_10": 0.595,
+      "recall_at_5_by_category": {
+        "acronym": 0.864,
+        "identifier": 1,
+        "paraphrase": 0.059,
+        "repository": 0.8
+      },
+      "mrr_by_category": {
+        "acronym": 1,
+        "identifier": 1,
+        "paraphrase": 0.059,
+        "repository": 0.8
+      },
+      "misses": [
+        "q11",
+        "q17",
+        "q19",
+        "q25",
+        "q26",
+        "q27",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40",
+        "q41",
+        "q42"
+      ],
+      "p50_ms": 0
+    },
+    "hybrid": {
+      "queries": 42,
+      "recall_at_5": 0.917,
+      "mrr_at_10": 0.773,
+      "recall_at_5_by_category": {
+        "acronym": 0.864,
+        "identifier": 1,
+        "paraphrase": 0.882,
+        "repository": 1
+      },
+      "mrr_by_category": {
+        "acronym": 0.939,
+        "identifier": 0.889,
+        "paraphrase": 0.687,
+        "repository": 0.49
+      },
+      "misses": [
+        "q11",
+        "q17",
+        "q19",
+        "q32",
+        "q33"
+      ],
+      "p50_ms": 65.094
+    },
+    "vector": {
+      "queries": 42,
+      "recall_at_5": 0.81,
+      "mrr_at_10": 0.496,
+      "recall_at_5_by_category": {
+        "acronym": 0.636,
+        "identifier": 0.778,
+        "paraphrase": 0.912,
+        "repository": 0.9
+      },
+      "mrr_by_category": {
+        "acronym": 0.447,
+        "identifier": 0.55,
+        "paraphrase": 0.499,
+        "repository": 0.5
+      },
+      "misses": [
+        "q01",
+        "q03",
+        "q11",
+        "q13",
+        "q14",
+        "q17",
+        "q19",
+        "q22",
+        "q33",
+        "q39"
+      ],
+      "p50_ms": 64.945
+    }
+  },
+  "min_similarity_sweep": [
+    {
+      "min_similarity": 0,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.773,
+      "unanswerable_mean_results": 10,
+      "unanswerable_mean_vector_only_results": 7,
+      "answerable_mean_results": 10
+    },
+    {
+      "min_similarity": 0.4,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.773,
+      "unanswerable_mean_results": 10,
+      "unanswerable_mean_vector_only_results": 7,
+      "answerable_mean_results": 10
+    },
+    {
+      "min_similarity": 0.45,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.773,
+      "unanswerable_mean_results": 10,
+      "unanswerable_mean_vector_only_results": 7,
+      "answerable_mean_results": 9.833333333333334
+    },
+    {
+      "min_similarity": 0.5,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.773,
+      "unanswerable_mean_results": 9.4,
+      "unanswerable_mean_vector_only_results": 6.4,
+      "answerable_mean_results": 9.69047619047619
+    },
+    {
+      "min_similarity": 0.55,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.787,
+      "unanswerable_mean_results": 4.6,
+      "unanswerable_mean_vector_only_results": 1.6,
+      "answerable_mean_results": 7.476190476190476
+    },
+    {
+      "min_similarity": 0.6,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.795,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0.2,
+      "answerable_mean_results": 5.904761904761905
+    },
+    {
+      "min_similarity": 0.65,
+      "hybrid_recall_at_5": 0.94,
+      "hybrid_mrr_at_10": 0.773,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.619047619047619
+    },
+    {
+      "min_similarity": 0.7,
+      "hybrid_recall_at_5": 0.94,
+      "hybrid_mrr_at_10": 0.814,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.476190476190476
+    },
+    {
+      "min_similarity": 0.75,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.733,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.4523809523809526
+    }
+  ],
+  "relevant_similarity_min": 0.495,
+  "relevant_similarity_p10": 0.544,
+  "unanswerable_top_similarity": [
+    0.648,
+    0.525,
+    0.552,
+    0.524,
+    0.524
+  ],
+  "conflict_sweep": [
+    {
+      "threshold": 0.5,
+      "detected": 379,
+      "true_positives": 7,
+      "precision": 0.018,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.55,
+      "detected": 364,
+      "true_positives": 7,
+      "precision": 0.019,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.6,
+      "detected": 313,
+      "true_positives": 7,
+      "precision": 0.022,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.65,
+      "detected": 142,
+      "true_positives": 7,
+      "precision": 0.049,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.7,
+      "detected": 29,
+      "true_positives": 7,
+      "precision": 0.241,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.75,
+      "detected": 6,
+      "true_positives": 5,
+      "precision": 0.833,
+      "recall": 0.625
+    },
+    {
+      "threshold": 0.8,
+      "detected": 4,
+      "true_positives": 4,
+      "precision": 1,
+      "recall": 0.5
+    },
+    {
+      "threshold": 0.85,
+      "detected": 1,
+      "true_positives": 1,
+      "precision": 1,
+      "recall": 0.125
+    },
+    {
+      "threshold": 0.9,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    },
+    {
+      "threshold": 0.95,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    }
+  ],
+  "labeled_pairs": [
+    {
+      "deeper": "pay-logging",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.746
+    },
+    {
+      "deeper": "pay-pool",
+      "ancestor": "plat-pool",
+      "same_kind": true,
+      "similarity": 0.813
+    },
+    {
+      "deeper": "led-migrations",
+      "ancestor": "plat-migrations",
+      "same_kind": true,
+      "similarity": 0.826
+    },
+    {
+      "deeper": "mob-flags",
+      "ancestor": "org-feature-flags",
+      "same_kind": true,
+      "similarity": 0.708
+    },
+    {
+      "deeper": "ios-flags",
+      "ancestor": "mob-flags",
+      "same_kind": true,
+      "similarity": 0.878
+    },
+    {
+      "deeper": "pay-otel",
+      "ancestor": "org-otel",
+      "same_kind": true,
+      "similarity": 0.774
+    },
+    {
+      "deeper": "plat-go-version",
+      "ancestor": "org-go-version",
+      "same_kind": true,
+      "similarity": 0.82
+    },
+    {
+      "deeper": "ana-region",
+      "ancestor": "org-pii",
+      "same_kind": false,
+      "similarity": 0.712
+    },
+    {
+      "deeper": "plat-logging-fields",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.737
+    },
+    {
+      "deeper": "pay-db",
+      "ancestor": "plat-postgres",
+      "same_kind": true,
+      "similarity": 0.663
+    },
+    {
+      "deeper": "ios-uikit",
+      "ancestor": "mob-swift",
+      "same_kind": true,
+      "similarity": 0.707
+    },
+    {
+      "deeper": "data-pii",
+      "ancestor": "org-pii",
+      "same_kind": true,
+      "similarity": 0.773
+    },
+    {
+      "deeper": "ana-logging",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.695
+    },
+    {
+      "deeper": "ios-flags",
+      "ancestor": "org-feature-flags",
+      "same_kind": true,
+      "similarity": 0.7
+    },
+    {
+      "deeper": "led-cache",
+      "ancestor": "plat-cache",
+      "same_kind": true,
+      "similarity": 0.728
+    },
+    {
+      "deeper": "pay-slo",
+      "ancestor": "org-slo",
+      "same_kind": false,
+      "similarity": 0.756
+    }
+  ],
+  "same_kind_ancestor_pairs": 379,
+  "stored_conflict_threshold": 0.75,
+  "stored_conflict_candidates": 6,
+  "stored_matches_offline": true
+}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/team-memory/team-memory/internal/auth"
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/search"
 )
 
 // Version is reported as the server version.
@@ -40,11 +41,11 @@ type Options struct {
 
 // Handler returns the MCP endpoint, wrapped in bearer-token authentication.
 // There is no unauthenticated mode.
-func Handler(svc *memory.Service, authn auth.Authenticator, opts Options) http.Handler {
+func Handler(svc *memory.Service, srch *search.Service, authn auth.Authenticator, opts Options) http.Handler {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	server := NewServer(svc, opts)
+	server := NewServer(svc, srch, opts)
 	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		// Stateless serves protocol 2026-07-28 (no sessions, server/discover)
 		// and still accepts the 2025-11-25 initialize handshake.
@@ -71,10 +72,10 @@ func Handler(svc *memory.Service, authn auth.Authenticator, opts Options) http.H
 }
 
 // NewServer builds the MCP server with all tools and resources registered.
-func NewServer(svc *memory.Service, opts Options) *mcp.Server {
+func NewServer(svc *memory.Service, srch *search.Service, opts Options) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "team-memory", Title: "Team Memory", Version: Version},
 		&mcp.ServerOptions{Instructions: instructions, Logger: opts.Logger})
-	t := &tools{svc: svc, defaultScope: opts.DefaultScope}
+	t := &tools{svc: svc, search: srch, defaultScope: opts.DefaultScope}
 	t.register(s)
 	registerResources(s, svc)
 	return s

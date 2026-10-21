@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/search"
 )
 
 type seen struct {
@@ -19,12 +20,12 @@ type seen struct {
 
 func searchAll(t *testing.T, tr *tree, p memory.Principal, scope string) (map[string]seen, error) {
 	t.Helper()
-	res, err := tr.svc.Search(context.Background(), p, memory.SearchInput{Scope: scope, Query: "guidance", Limit: 50})
+	res, err := tr.search.Search(context.Background(), p, search.Input{Scope: scope, Query: "guidance", Limit: 50})
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]seen{}
-	for _, r := range res {
+	for _, r := range res.Results {
 		out[r.Title] = seen{r.OriginScope, r.Inherited}
 	}
 	return out, nil
@@ -139,10 +140,8 @@ func TestScopeInheritance(t *testing.T) {
 	})
 
 	t.Run("get by id respects the same rules", func(t *testing.T) {
-		res, _ := tr.svc.Search(ctx, tr.owner, memory.SearchInput{Scope: "acme/platform/payments", Query: "payments"})
-		paymentsID := res[0].ID
-		res, _ = tr.svc.Search(ctx, tr.owner, memory.SearchInput{Scope: "acme", Query: "organization"})
-		orgID := res[0].ID
+		paymentsID := tr.find(t, tr.owner, search.Input{Scope: "acme/platform/payments", Query: "payments"})[0].ID
+		orgID := tr.find(t, tr.owner, search.Input{Scope: "acme", Query: "organization"})[0].ID
 		for _, p := range []memory.Principal{teamReader, orgOnly, sibling} {
 			if _, err := tr.svc.Get(ctx, p, paymentsID, ""); !errors.Is(err, memory.ErrNotFound) {
 				t.Errorf("%s fetched a project memory: %v", p.DisplayName, err)

@@ -1,0 +1,376 @@
+{
+  "model": "qwen3-embedding:0.6b",
+  "dimensions": 1024,
+  "memories": 67,
+  "embed_seconds": 6.167318417,
+  "modes": {
+    "fulltext": {
+      "queries": 42,
+      "recall_at_5": 0.893,
+      "mrr_at_10": 0.689,
+      "recall_at_5_by_category": {
+        "acronym": 0.864,
+        "identifier": 1,
+        "paraphrase": 0.882,
+        "repository": 0.8
+      },
+      "mrr_by_category": {
+        "acronym": 0.909,
+        "identifier": 0.889,
+        "paraphrase": 0.523,
+        "repository": 0.412
+      },
+      "misses": [
+        "q11",
+        "q17",
+        "q19",
+        "q25",
+        "q32",
+        "q33"
+      ],
+      "p50_ms": 2.233
+    },
+    "fulltext_stage01_and": {
+      "queries": 42,
+      "recall_at_5": 0.56,
+      "mrr_at_10": 0.595,
+      "recall_at_5_by_category": {
+        "acronym": 0.864,
+        "identifier": 1,
+        "paraphrase": 0.059,
+        "repository": 0.8
+      },
+      "mrr_by_category": {
+        "acronym": 1,
+        "identifier": 1,
+        "paraphrase": 0.059,
+        "repository": 0.8
+      },
+      "misses": [
+        "q11",
+        "q17",
+        "q19",
+        "q25",
+        "q26",
+        "q27",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40",
+        "q41",
+        "q42"
+      ],
+      "p50_ms": 0
+    },
+    "hybrid": {
+      "queries": 42,
+      "recall_at_5": 0.929,
+      "mrr_at_10": 0.775,
+      "recall_at_5_by_category": {
+        "acronym": 0.955,
+        "identifier": 1,
+        "paraphrase": 0.882,
+        "repository": 0.9
+      },
+      "mrr_by_category": {
+        "acronym": 0.909,
+        "identifier": 0.87,
+        "paraphrase": 0.718,
+        "repository": 0.5
+      },
+      "misses": [
+        "q19",
+        "q22",
+        "q32",
+        "q33"
+      ],
+      "p50_ms": 144.748
+    },
+    "vector": {
+      "queries": 42,
+      "recall_at_5": 0.988,
+      "mrr_at_10": 0.618,
+      "recall_at_5_by_category": {
+        "acronym": 1,
+        "identifier": 1,
+        "paraphrase": 1,
+        "repository": 0.9
+      },
+      "mrr_by_category": {
+        "acronym": 0.727,
+        "identifier": 0.569,
+        "paraphrase": 0.598,
+        "repository": 0.533
+      },
+      "misses": [
+        "q22"
+      ],
+      "p50_ms": 138.28
+    }
+  },
+  "min_similarity_sweep": [
+    {
+      "min_similarity": 0,
+      "hybrid_recall_at_5": 0.929,
+      "hybrid_mrr_at_10": 0.775,
+      "unanswerable_mean_results": 10,
+      "unanswerable_mean_vector_only_results": 7,
+      "answerable_mean_results": 10
+    },
+    {
+      "min_similarity": 0.4,
+      "hybrid_recall_at_5": 0.94,
+      "hybrid_mrr_at_10": 0.84,
+      "unanswerable_mean_results": 3.2,
+      "unanswerable_mean_vector_only_results": 0.8,
+      "answerable_mean_results": 4.738095238095238
+    },
+    {
+      "min_similarity": 0.45,
+      "hybrid_recall_at_5": 0.964,
+      "hybrid_mrr_at_10": 0.875,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0.4,
+      "answerable_mean_results": 4.5
+    },
+    {
+      "min_similarity": 0.5,
+      "hybrid_recall_at_5": 0.964,
+      "hybrid_mrr_at_10": 0.905,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.476190476190476
+    },
+    {
+      "min_similarity": 0.55,
+      "hybrid_recall_at_5": 0.94,
+      "hybrid_mrr_at_10": 0.901,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.476190476190476
+    },
+    {
+      "min_similarity": 0.6,
+      "hybrid_recall_at_5": 0.94,
+      "hybrid_mrr_at_10": 0.89,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.476190476190476
+    },
+    {
+      "min_similarity": 0.65,
+      "hybrid_recall_at_5": 0.917,
+      "hybrid_mrr_at_10": 0.846,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.4523809523809526
+    },
+    {
+      "min_similarity": 0.7,
+      "hybrid_recall_at_5": 0.893,
+      "hybrid_mrr_at_10": 0.786,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.4523809523809526
+    },
+    {
+      "min_similarity": 0.75,
+      "hybrid_recall_at_5": 0.893,
+      "hybrid_mrr_at_10": 0.705,
+      "unanswerable_mean_results": 3,
+      "unanswerable_mean_vector_only_results": 0,
+      "answerable_mean_results": 4.4523809523809526
+    }
+  ],
+  "relevant_similarity_min": 0.2389,
+  "relevant_similarity_p10": 0.3813,
+  "unanswerable_top_similarity": [
+    0.467,
+    0.561,
+    0.247,
+    0.316,
+    0.254
+  ],
+  "conflict_sweep": [
+    {
+      "threshold": 0.5,
+      "detected": 20,
+      "true_positives": 7,
+      "precision": 0.35,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.55,
+      "detected": 14,
+      "true_positives": 7,
+      "precision": 0.5,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.6,
+      "detected": 12,
+      "true_positives": 7,
+      "precision": 0.583,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.65,
+      "detected": 11,
+      "true_positives": 7,
+      "precision": 0.636,
+      "recall": 0.875
+    },
+    {
+      "threshold": 0.7,
+      "detected": 7,
+      "true_positives": 6,
+      "precision": 0.857,
+      "recall": 0.75
+    },
+    {
+      "threshold": 0.75,
+      "detected": 4,
+      "true_positives": 3,
+      "precision": 0.75,
+      "recall": 0.375
+    },
+    {
+      "threshold": 0.8,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    },
+    {
+      "threshold": 0.85,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    },
+    {
+      "threshold": 0.9,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    },
+    {
+      "threshold": 0.95,
+      "detected": 0,
+      "true_positives": 0,
+      "precision": 0,
+      "recall": 0
+    }
+  ],
+  "labeled_pairs": [
+    {
+      "deeper": "pay-logging",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.675
+    },
+    {
+      "deeper": "pay-pool",
+      "ancestor": "plat-pool",
+      "same_kind": true,
+      "similarity": 0.783
+    },
+    {
+      "deeper": "led-migrations",
+      "ancestor": "plat-migrations",
+      "same_kind": true,
+      "similarity": 0.716
+    },
+    {
+      "deeper": "mob-flags",
+      "ancestor": "org-feature-flags",
+      "same_kind": true,
+      "similarity": 0.777
+    },
+    {
+      "deeper": "ios-flags",
+      "ancestor": "mob-flags",
+      "same_kind": true,
+      "similarity": 0.794
+    },
+    {
+      "deeper": "pay-otel",
+      "ancestor": "org-otel",
+      "same_kind": true,
+      "similarity": 0.711
+    },
+    {
+      "deeper": "plat-go-version",
+      "ancestor": "org-go-version",
+      "same_kind": true,
+      "similarity": 0.748
+    },
+    {
+      "deeper": "ana-region",
+      "ancestor": "org-pii",
+      "same_kind": false,
+      "similarity": 0.494
+    },
+    {
+      "deeper": "plat-logging-fields",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.529
+    },
+    {
+      "deeper": "pay-db",
+      "ancestor": "plat-postgres",
+      "same_kind": true,
+      "similarity": 0.628
+    },
+    {
+      "deeper": "ios-uikit",
+      "ancestor": "mob-swift",
+      "same_kind": true,
+      "similarity": 0.688
+    },
+    {
+      "deeper": "data-pii",
+      "ancestor": "org-pii",
+      "same_kind": true,
+      "similarity": 0.365
+    },
+    {
+      "deeper": "ana-logging",
+      "ancestor": "org-logging",
+      "same_kind": true,
+      "similarity": 0.678
+    },
+    {
+      "deeper": "ios-flags",
+      "ancestor": "org-feature-flags",
+      "same_kind": true,
+      "similarity": 0.763
+    },
+    {
+      "deeper": "led-cache",
+      "ancestor": "plat-cache",
+      "same_kind": true,
+      "similarity": 0.49
+    },
+    {
+      "deeper": "pay-slo",
+      "ancestor": "org-slo",
+      "same_kind": false,
+      "similarity": 0.547
+    }
+  ],
+  "same_kind_ancestor_pairs": 379,
+  "stored_conflict_threshold": 0.7,
+  "stored_conflict_candidates": 7,
+  "stored_matches_offline": true
+}

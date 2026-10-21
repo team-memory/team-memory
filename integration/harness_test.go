@@ -5,72 +5,28 @@ package integration
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"net/url"
-	"os"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/team-memory/team-memory/internal/embeddings"
+	"github.com/team-memory/team-memory/internal/jobs"
 	"github.com/team-memory/team-memory/internal/memory"
-	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
+	"github.com/team-memory/team-memory/internal/search"
+	"github.com/team-memory/team-memory/internal/testdb"
 )
 
-func newDB(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	admin := os.Getenv("TEST_DATABASE_URL")
-	if admin == "" {
-		if os.Getenv("CI") != "" {
-			t.Fatal("TEST_DATABASE_URL must be set in CI")
-		}
-		t.Skip("TEST_DATABASE_URL not set; run `make test` to start PostgreSQL")
-	}
-	ctx := context.Background()
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	name := "tm_test_" + hex.EncodeToString(b)
-
-	conn, err := pgx.Connect(ctx, admin)
-	if err != nil {
-		t.Fatalf("connect admin: %v", err)
-	}
-	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	_ = conn.Close(ctx)
-
-	u, err := url.Parse(admin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.Path = "/" + name
-	pool, err := postgres.Open(ctx, u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Close()
-		c, err := pgx.Connect(context.Background(), admin)
-		if err == nil {
-			_, _ = c.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
-			_ = c.Close(context.Background())
-		}
-	})
-	if err := postgres.Migrate(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return pool
-}
+func newDB(t *testing.T) *pgxpool.Pool { return testdb.New(t) }
 
 // tree is the standard fixture: acme (org) -> platform (team) -> payments,
 // with a sibling project billing under the same team.
 type tree struct {
 	pool     *pgxpool.Pool
 	svc      *memory.Service
+	search   *search.Service
+	embedder *embeddings.Fake
 	owner    memory.Principal
 	org      memory.Scope
 	team     memory.Scope
@@ -103,7 +59,51 @@ func newTree(t *testing.T) *tree {
 	if err := svc.AddMember(ctx, uuid.Nil, "acme", owner.ID, memory.RoleMaintainer, true); err != nil {
 		t.Fatal(err)
 	}
-	return &tree{pool: pool, svc: svc, owner: owner, org: org, team: team, payments: payments, billing: billing}
+	// The fake embedder stands in for the default model so the migration's
+	// registry row and HNSW index are exercised as in production.
+	fake := embeddings.NewFake("nomic-embed-text", 768)
+	srch := search.New(pool, search.Config{Provider: fake, MinVectorSimilarity: fakeMinSimilarity})
+	return &tree{pool: pool, svc: svc, search: srch, embedder: fake, owner: owner,
+		org: org, team: team, payments: payments, billing: billing}
+}
+
+// fakeMinSimilarity separates texts sharing words from unrelated texts for
+// the bag-of-words fake (unrelated texts score near 0 +- 0.04 at 768 dims).
+const fakeMinSimilarity = 0.15
+
+// indexer returns an embedding job handler for the tree's fake model.
+func (tr *tree) indexer(t *testing.T) *embeddings.Indexer {
+	t.Helper()
+	ix, err := embeddings.NewIndexer(context.Background(), tr.pool, tr.embedder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ix
+}
+
+// drain runs embedding jobs until none is ready.
+func (tr *tree) drain(t *testing.T) {
+	t.Helper()
+	w := tr.indexer(t).Worker(jobs.Config{Name: "test"})
+	for {
+		n, err := w.RunOnce(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			return
+		}
+	}
+}
+
+// find runs a hybrid search and fails the test on error.
+func (tr *tree) find(t *testing.T, p memory.Principal, in search.Input) []search.Result {
+	t.Helper()
+	res, err := tr.search.Search(context.Background(), p, in)
+	if err != nil {
+		t.Fatalf("search %q in %s: %v", in.Query, in.Scope, err)
+	}
+	return res.Results
 }
 
 func newPrincipal(t *testing.T, pool *pgxpool.Pool, name string) memory.Principal {

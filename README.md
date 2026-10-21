@@ -2,7 +2,7 @@
 
 A self-hosted, permission-aware shared memory for developers and their AI coding agents, served over MCP (Model Context Protocol).
 
-> **Status: early development (stage 01 of 7).** Not production-ready. There is no OAuth/SSO, no row-level security, no approval workflow, and no web portal yet. See `proposal.md` for the plan and `docs/handoff/` for progress.
+> **Status: early development (stage 02 of 7).** Not production-ready. There is no OAuth/SSO, no row-level security, no approval workflow, and no web portal yet. See `proposal.md` for the plan and `docs/handoff/` for progress.
 
 This repository holds both the service code and the planning material (`proposal.md`, `review-decisions.md`, `prompts/`).
 
@@ -10,7 +10,8 @@ This repository holds both the service code and the planning material (`proposal
 
 - Versioned memories (`fact`, `decision`, `convention`, `lesson`, `context`) with immutable content revisions, immutable lifecycle events, optimistic concurrency, supersession and archival.
 - Hierarchical scopes (organization → team → project, configurable levels and depth). Memories are inherited downward only and labeled with `origin_scope` and `inherited`.
-- PostgreSQL full-text search.
+- Hybrid search: PostgreSQL full-text plus pgvector similarity, fused with Reciprocal Rank Fusion, filtered to the scope chain before ranking. If no embedding provider is configured, or it is unreachable, search falls back to full-text and says so in the response.
+- Durable embedding jobs: a transactional outbox in PostgreSQL and a worker with retries, backoff and dead-lettering. Embeddings come from a local Ollama.
 - MCP over Streamable HTTP with eight tools and four resource views. Serves protocol 2026-07-28 and older clients that use the `initialize` handshake.
 - Personal access tokens: shown once, stored hashed, with expiry and revocation. There is no unauthenticated mode.
 
@@ -54,6 +55,48 @@ Codex:
 codex mcp add team_memory --url http://127.0.0.1:8080/mcp --bearer-token-env-var TEAM_MEMORY_TOKEN
 ```
 
+### Semantic search (optional)
+
+Hybrid search needs an Ollama server with an embedding model. The default is `nomic-embed-text` (768 dimensions):
+
+```bash
+ollama pull nomic-embed-text
+```
+
+Point both the server and the worker at it. Without `TEAM_MEMORY_OLLAMA_URL`, search is full-text only.
+
+```bash
+export TEAM_MEMORY_OLLAMA_URL=http://127.0.0.1:11434
+```
+
+```bash
+./bin/team-memory worker
+```
+
+The worker embeds new revisions and backfills existing memories at startup. Check the queue, and requeue dead-lettered jobs after an outage:
+
+```bash
+./bin/team-memory jobs status
+```
+
+```bash
+./bin/team-memory jobs retry-dead
+```
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `TEAM_MEMORY_OLLAMA_URL` | unset (full-text only) | serve, worker |
+| `TEAM_MEMORY_EMBEDDING_MODEL` | `nomic-embed-text` | serve, worker |
+| `TEAM_MEMORY_EMBEDDING_DIMENSIONS` | from the model's defaults | serve, worker |
+| `TEAM_MEMORY_EMBEDDING_QUERY_PREFIX`, `..._DOCUMENT_PREFIX` | from the model's defaults | serve, worker |
+| `TEAM_MEMORY_VECTOR_MIN_SIMILARITY` | from the model's defaults | serve |
+| `TEAM_MEMORY_QUERY_EMBED_TIMEOUT` | `2s` | serve |
+| `TEAM_MEMORY_HNSW_ITERATIVE_SCAN`, `TEAM_MEMORY_HNSW_EF_SEARCH` | `relaxed_order`, `100` | serve |
+| `TEAM_MEMORY_CONFLICT_SIMILARITY` | from the model's defaults | worker |
+| `TEAM_MEMORY_WORKER_BATCH`, `..._POLL_INTERVAL`, `..._LEASE`, `..._BACKOFF_BASE`, `..._BACKOFF_MAX` | `16`, `1s`, `5m`, `5s`, `10m` | worker |
+
+To add another embedding model, use `team-memory embeddings add-model --name <model>`. See `docs/decisions/embedding-models.md`.
+
 ## Scopes, members and tokens (operator CLI)
 
 These commands act directly on the database. Authorized administration through the API arrives in stage 04.
@@ -71,6 +114,8 @@ Grants on a scope apply to that scope only, unless `--cascade` extends them to a
 
 ## MCP surface
 
+`memory_search` takes `query`, `scope` (alias `project`), `types`, `limit`, `include_superseded` and `include_overridden`. Each result carries `origin_scope`, `inherited`, `precedence` (scope depth), `trust`, `revision`, `source_uri`, `updated_at`, a 0–1 rank-based `score` (not a calibrated probability), and the `retrievers` that matched it. `meta` reports whether semantic matching ran (see `docs/decisions/retrieval-scoring.md`).
+
 Tools: `memory_search`, `memory_get`, `memory_create`, `memory_update`, `memory_supersede`, `memory_history`, `memory_approve`, `memory_recent`. `memory_approve` only ever *requests* review. It is not implemented until stage 04, and approval itself will be a browser-only action.
 
 Resources: `memory://scopes/{scope-path}/{overview|decisions|conventions|recent}`, with a `memory://projects/...` alias.
@@ -85,9 +130,9 @@ make test
 
 `make test` runs unit tests and integration tests against real PostgreSQL. Each integration test creates and drops its own database.
 
-Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`.
+Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`, `make worker`, `make eval` (retrieval evaluation against a real model, see `docs/eval/retrieval-report.md`) and `make bench-vector` (vector index benchmark).
 
-Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `docs/`.
+Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `docs/`.
 
 ## License
 
