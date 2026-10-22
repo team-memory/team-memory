@@ -191,8 +191,8 @@ func (r *clientRegistry) register(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	var m clientMetadata
-	dec := json.NewDecoder(io.LimitReader(req.Body, 16<<10))
-	if err := dec.Decode(&m); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, 16<<10))
+	if err != nil || json.Unmarshal(body, &m) != nil {
 		registrationError(w, "invalid_client_metadata", "request body must be client metadata JSON")
 		return
 	}
@@ -235,7 +235,6 @@ func registrationError(w http.ResponseWriter, code, desc string) {
 
 const (
 	cimdMaxBytes   = 64 << 10
-	cimdMinTTL     = time.Minute
 	cimdDefaultTTL = time.Hour
 	cimdMaxTTL     = 24 * time.Hour
 )
@@ -304,24 +303,30 @@ func (r *clientRegistry) metadataDocument(ctx context.Context, id string) (*clie
 	if len(r.cache) >= maxDCRClients {
 		r.cache = map[string]cachedClient{}
 	}
-	r.cache[id] = cachedClient{c: c, expires: r.now().Add(cacheTTL(resp.Header.Get("Cache-Control")))}
+	if ttl := cacheTTL(strings.Join(resp.Header.Values("Cache-Control"), ",")); ttl > 0 {
+		r.cache[id] = cachedClient{c: c, expires: r.now().Add(ttl)}
+	} else {
+		delete(r.cache, id)
+	}
 	r.mu.Unlock()
 	return c, nil
 }
 
 func cacheTTL(cc string) time.Duration {
+	ttl := cimdDefaultTTL
 	for _, d := range strings.Split(cc, ",") {
 		d = strings.TrimSpace(strings.ToLower(d))
 		if d == "no-store" || d == "no-cache" {
-			return cimdMinTTL
+			return 0
 		}
 		if v, ok := strings.CutPrefix(d, "max-age="); ok {
-			if n, err := strconv.Atoi(v); err == nil {
-				return min(max(time.Duration(n)*time.Second, cimdMinTTL), cimdMaxTTL)
+			if n, err := strconv.ParseUint(strings.Trim(v, "\""), 10, 64); err == nil {
+				// Clamp seconds before conversion to avoid duration overflow.
+				ttl = time.Duration(min(n, uint64(cimdMaxTTL/time.Second))) * time.Second
 			}
 		}
 	}
-	return cimdDefaultTTL
+	return ttl
 }
 
 // publicOnlyHTTPClient refuses to connect to loopback, private, link-local

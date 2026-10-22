@@ -342,12 +342,79 @@ func TestPublicIP(t *testing.T) {
 
 func TestCacheTTL(t *testing.T) {
 	for h, want := range map[string]time.Duration{
-		"": cimdDefaultTTL, "max-age=600": 10 * time.Minute, "max-age=1": cimdMinTTL,
-		"public, max-age=999999": cimdMaxTTL, "no-store": cimdMinTTL,
+		"": cimdDefaultTTL, "max-age=600": 10 * time.Minute, "max-age=1": time.Second,
+		"public, max-age=999999": cimdMaxTTL, "no-store": 0,
+		"max-age=600, no-store": 0, "no-store, max-age=600": 0,
+		"max-age=600, no-cache": 0, "max-age=0": 0,
+		"max-age=\"600\"":              10 * time.Minute,
+		"max-age=18446744073709551615": cimdMaxTTL,
 	} {
 		if got := cacheTTL(h); got != want {
 			t.Errorf("cacheTTL(%q) = %s", h, got)
 		}
+	}
+}
+
+func TestRegistrationBodyValidation(t *testing.T) {
+	valid := `{"redirect_uris":["http://127.0.0.1/callback"]}`
+	for name, tc := range map[string]struct {
+		body   string
+		status int
+	}{
+		"valid":                {valid, http.StatusCreated},
+		"whitespace":           {valid + "\n ", http.StatusCreated},
+		"trailing JSON":        {valid + `{}`, http.StatusBadRequest},
+		"trailing garbage":     {valid + "garbage", http.StatusBadRequest},
+		"oversized whitespace": {valid + strings.Repeat(" ", 16<<10), http.StatusBadRequest},
+		"oversized field":      {`{"redirect_uris":["http://127.0.0.1/callback"],"extra":"` + strings.Repeat("x", 16<<10) + `"}`, http.StatusBadRequest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newClientRegistry(Registration{Dynamic: true}, "", newMemState(time.Now))
+			w := httptest.NewRecorder()
+			r.register(w, httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(tc.body)))
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.status, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestMetadataCachePolicy(t *testing.T) {
+	for name, headers := range map[string][]string{
+		"cacheable": {"max-age=600"},
+		"no store":  {"max-age=600", "no-store"},
+		"no cache":  {"max-age=600, no-cache"},
+		"zero age":  {"max-age=0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/json")
+				for _, h := range headers {
+					w.Header().Add("Cache-Control", h)
+				}
+				_ = json.NewEncoder(w).Encode(clientMetadata{
+					ClientID:   "https://" + req.Host + req.URL.Path,
+					ClientName: "test", RedirectURIs: []string{"http://127.0.0.1/callback"},
+				})
+			}))
+			defer srv.Close()
+			r := newClientRegistry(Registration{ClientIDMetadataDocuments: true}, "", newMemState(time.Now))
+			r.fetch = srv.Client()
+			for i := 0; i < 2; i++ {
+				if _, err := r.get(context.Background(), srv.URL+"/client.json"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := 2
+			if name == "cacheable" {
+				want = 1
+			}
+			if calls != want {
+				t.Fatalf("metadata fetches = %d, want %d", calls, want)
+			}
+		})
 	}
 }
 
