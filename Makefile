@@ -4,7 +4,7 @@ TEST_DATABASE_URL ?= postgres://teammemory:teammemory-dev@127.0.0.1:55432/postgr
 SQLC_VERSION := v1.31.1
 export DATABASE_URL TEST_DATABASE_URL
 
-.PHONY: test-e2e help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
+.PHONY: image helm-lint check-alerts secret-scan dev-git-up test-mirror-remote k3d-up k3d-down rollback-drill backup-drill loadtest test-e2e help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -58,7 +58,7 @@ check-generate: generate ## Fail if generated code is stale
 
 lint: ## go vet and golangci-lint (if installed)
 	go vet ./...
-	@command -v golangci-lint >/dev/null && golangci-lint run ./... || echo "golangci-lint not installed; skipped"
+	@if command -v golangci-lint >/dev/null; then golangci-lint run ./...; else echo "golangci-lint not installed; skipped"; fi
 
 dev-idp-up: ## Start the disposable Keycloak + Dex stack for SSO development
 	./deploy/dev-idp/setup.sh
@@ -66,3 +66,46 @@ dev-idp-up: ## Start the disposable Keycloak + Dex stack for SSO development
 
 dev-idp-down: ## Stop the dev IdP stack
 	docker compose -f deploy/dev-idp/compose.yaml down
+
+IMAGE ?= team-memory:dev
+PROMETHEUS_IMAGE := prom/prometheus:v3.5.0
+
+image: ## Build the container image ($(IMAGE))
+	docker build --build-arg VERSION=$$(git describe --tags --always --dirty) -t $(IMAGE) .
+
+helm-lint: ## Lint and render the chart (solo and all-features values)
+	helm lint deploy/helm/team-memory --strict -f deploy/helm/team-memory/ci/solo-values.yaml
+	helm lint deploy/helm/team-memory --strict -f deploy/helm/team-memory/ci/full-values.yaml
+	helm template t deploy/helm/team-memory -f deploy/helm/team-memory/ci/full-values.yaml >/dev/null
+
+check-alerts: ## Validate and unit-test the example alert rules with promtool (Docker)
+	docker run --rm -v $(CURDIR)/deploy:/deploy -w /deploy/observability --entrypoint promtool $(PROMETHEUS_IMAGE) \
+		check rules ../helm/team-memory/files/prometheus-rules.yaml
+	docker run --rm -v $(CURDIR)/deploy:/deploy -w /deploy/observability --entrypoint promtool $(PROMETHEUS_IMAGE) \
+		test rules alerts-test.yaml
+
+secret-scan: ## Scan the working tree and git history for secrets (gitleaks)
+	gitleaks dir . --redact --no-banner
+	gitleaks git . --redact --no-banner
+
+dev-git-up: ## Start the disposable Gitea (HTTPS + SSH) for mirror tests
+	./deploy/dev-git/setup.sh
+
+test-mirror-remote: ## Authenticated SSH and HTTPS mirror tests against the dev Gitea
+	TEAM_MEMORY_MIRROR_TEST_ENV=$(CURDIR)/deploy/dev-git/.local/env go test -count=1 -v -run 'TestMirror(HTTPS|SSH)' ./internal/mirror/
+
+k3d-up: ## Disposable k3d cluster with Traefik, PostgreSQL and Keycloak (never touches other contexts)
+	./deploy/dev-k3d/setup.sh
+
+k3d-down: ## Delete the disposable k3d cluster
+	k3d cluster delete tm-dev
+
+rollback-drill: ## Upgrade/rollback/bad-migration drill on the k3d cluster
+	./deploy/dev-k3d/rollback-drill.sh
+
+backup-drill: ## pgBackRest restore drill in throwaway containers
+	./deploy/backup/drill.sh
+
+loadtest: ## Build the load-test tool (see docs/operations/load-test-report.md)
+	go build -o bin/loadtest ./loadtest
+

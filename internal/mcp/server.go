@@ -15,11 +15,15 @@ import (
 	"github.com/google/uuid"
 	sdkauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/team-memory/team-memory/internal/auth"
 	"github.com/team-memory/team-memory/internal/memory"
 	"github.com/team-memory/team-memory/internal/ratelimit"
 	"github.com/team-memory/team-memory/internal/search"
+	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
 // Version is reported as the server version.
@@ -63,6 +67,14 @@ type Options struct {
 	// is "pat" or "jwt"; reason never contains the credential. Requests
 	// without any credential are only logged: clients probe without one.
 	OnAuthFailure func(ctx context.Context, kind, reason string)
+	// Observer, when set, receives one call per tools/call (metrics).
+	Observer ToolObserver
+}
+
+// ToolObserver records tool calls. outcome is ok, tool_error (a result with
+// isError, such as not_found or validation) or error (a protocol error).
+type ToolObserver interface {
+	ToolCall(tool, outcome string, d time.Duration)
 }
 
 // DefaultMaxBodyBytes bounds a JSON-RPC request. The largest legitimate
@@ -164,6 +176,7 @@ func NewServer(svc *memory.Service, srch *search.Service, opts Options) *mcp.Ser
 		&mcp.ServerOptions{Instructions: instructions, Logger: opts.Logger})
 	t := &tools{svc: svc, search: srch, defaultScope: opts.DefaultScope}
 	t.register(s)
+	s.AddReceivingMiddleware(observeTools(opts.Observer))
 	registerResources(s, svc)
 	return s
 }
@@ -180,6 +193,42 @@ func principalFrom(extra *mcp.RequestExtra) (memory.Principal, error) {
 }
 
 var errUnauthenticated = errors.New("unauthenticated")
+
+// knownTools bounds the tool label: an unknown name from a client is
+// recorded as "unknown".
+var knownTools = map[string]bool{"memory_search": true, "memory_get": true, "memory_create": true, "memory_update": true,
+	"memory_supersede": true, "memory_history": true, "memory_approve": true, "memory_recent": true}
+
+// observeTools wraps tools/call in a span and reports it to the observer.
+func observeTools(o ToolObserver) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			tool := "unknown"
+			if r, ok := req.(*mcp.CallToolRequest); ok && r.Params != nil && knownTools[r.Params.Name] {
+				tool = r.Params.Name
+			}
+			ctx, span := telemetry.Tracer.Start(ctx, "mcp.tool "+tool, trace.WithAttributes(attribute.String("mcp.tool.name", tool)))
+			defer span.End()
+			start := time.Now()
+			res, err := next(ctx, method, req)
+			outcome := "ok"
+			if err != nil {
+				outcome = "error"
+				span.SetStatus(codes.Error, "protocol error")
+			} else if r, ok := res.(*mcp.CallToolResult); ok && r.IsError {
+				outcome = "tool_error"
+			}
+			span.SetAttributes(attribute.String("mcp.tool.outcome", outcome))
+			if o != nil {
+				o.ToolCall(tool, outcome, time.Since(start))
+			}
+			return res, err
+		}
+	}
+}
 
 // toolError is the structured error body returned in tool results.
 type toolError struct {

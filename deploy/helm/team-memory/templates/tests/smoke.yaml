@@ -1,0 +1,23 @@
+# helm test: readiness of the API through its Service.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "team-memory.fullname" . }}-smoke
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smoke
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: smoke
+      image: {{ include "team-memory.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      args: ["healthcheck", "--wait", "60s", "--url", "http://{{ include "team-memory.fullname" . }}:{{ .Values.service.port }}/readyz"]
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}

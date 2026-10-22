@@ -1,0 +1,137 @@
+{{- if .Values.sso.enabled }}
+{{- $_ := required "sso.signingKeys.existingSecret is required with SSO" .Values.sso.signingKeys.existingSecret }}
+{{- if not .Values.sso.providers }}{{ fail "sso.enabled needs at least one entry in sso.providers" }}{{ end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "team-memory.fullname" . }}-api
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "team-memory.selector" (list . "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "team-memory.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "team-memory.podSecurity" . | nindent 6 }}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      {{- if .Values.api.topologySpread }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "team-memory.selector" (list . "api") | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "team-memory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: metrics, containerPort: 9090}
+          envFrom:
+            - configMapRef:
+                name: {{ include "team-memory.fullname" . }}
+          env:
+            - name: TEAM_MEMORY_APP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "team-memory.dbSecret" . }}
+                  key: {{ .Values.database.keys.app }}
+            {{- include "team-memory.commonEnv" (dict "root" . "component" "serve") | nindent 12 }}
+            {{- if .Values.embeddings.ollamaURL }}
+            {{- include "team-memory.embeddingEnv" . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.sso.enabled }}
+            - {name: sso-config, mountPath: /etc/team-memory/sso, readOnly: true}
+            - {name: signing-keys, mountPath: /etc/team-memory/signing, readOnly: true}
+            {{- range .Values.sso.providers }}
+            # Mounted without subPath so a rotated Secret is picked up.
+            - {name: {{ printf "idp-%s" .id }}, mountPath: {{ printf "/etc/team-memory/idp/%s" .id }}, readOnly: true}
+            {{- end }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.sso.enabled }}
+        - name: sso-config
+          configMap:
+            name: {{ include "team-memory.fullname" . }}
+            items: [{key: sso.json, path: sso.json}]
+        # Optional: a missing Secret leaves the pod running but not ready,
+        # with the reason in /readyz and the log, instead of stuck in
+        # ContainerCreating.
+        - name: signing-keys
+          secret:
+            secretName: {{ .Values.sso.signingKeys.existingSecret }}
+            defaultMode: 0440
+            optional: true
+        {{- range .Values.sso.providers }}
+        - name: {{ printf "idp-%s" .id }}
+          secret:
+            secretName: {{ required (printf "sso.providers[%s].existingSecret is required" .id) .existingSecret }}
+            defaultMode: 0440
+            optional: true
+            items: [{key: client-secret, path: client-secret}]
+        {{- end }}
+        {{- end }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -23,7 +23,7 @@ import (
 var nonTenantTables = []string{
 	"goose_db_version", "principals", "principal_identities", "personal_access_tokens", "embedding_models",
 	"oauth_clients", "oauth_auth_requests", "oauth_codes", "oauth_refresh_tokens", "oauth_pending_logins",
-	"portal_sessions", "portal_login_states",
+	"portal_sessions", "portal_login_states", "mirror_settings",
 }
 
 // TestEveryTenantTableHasForcedRLS enumerates every table in the schema.

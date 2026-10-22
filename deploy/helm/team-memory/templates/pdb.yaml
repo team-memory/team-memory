@@ -1,0 +1,13 @@
+{{- if and .Values.api.podDisruptionBudget.enabled (gt (int .Values.api.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "team-memory.fullname" . }}-api
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "team-memory.selector" (list . "api") | nindent 6 }}
+{{- end }}

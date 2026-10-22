@@ -15,12 +15,16 @@ import (
 	"log/slog"
 	"math"
 	"math/rand/v2"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/team-memory/team-memory/internal/postgres/db"
+	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
 // Job is a claimed job.
@@ -48,8 +52,9 @@ type Outcome struct {
 // provider request for many jobs.
 type Handler func(ctx context.Context, batch []Job) []Outcome
 
-// Metrics receives worker events. Prometheus wiring is stage 06; the default
-// is a no-op.
+// Metrics receives worker events (telemetry.JobMetrics in production). The
+// default is a no-op. A Metrics that also has Polled(kind string) is told
+// about every queue poll.
 type Metrics interface {
 	Claimed(kind string, n int)
 	Succeeded(kind string, d time.Duration)
@@ -118,10 +123,21 @@ func (c *Config) defaults() {
 
 // Worker polls one job kind.
 type Worker struct {
-	pool    *pgxpool.Pool
-	kind    string
-	handler Handler
-	cfg     Config
+	pool     *pgxpool.Pool
+	kind     string
+	handler  Handler
+	cfg      Config
+	lastPoll atomic.Int64 // unix nanoseconds of the last completed claim query
+}
+
+// LastPoll reports when the worker last polled the queue (zero before the
+// first poll). Liveness probes use it to detect a stuck loop.
+func (w *Worker) LastPoll() time.Time {
+	n := w.lastPoll.Load()
+	if n == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, n)
 }
 
 // NewWorker returns a worker for one job kind.
@@ -198,6 +214,10 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("claim: %w", err)
 	}
+	w.lastPoll.Store(time.Now().UnixNano())
+	if p, ok := w.cfg.Metrics.(interface{ Polled(string) }); ok {
+		p.Polled(w.kind)
+	}
 	if len(rows) == 0 {
 		return 0, nil
 	}
@@ -210,7 +230,10 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		}
 	}
 	start := time.Now()
+	ctx, span := telemetry.Tracer.Start(ctx, "jobs.batch "+w.kind, trace.WithAttributes(
+		attribute.String("job.kind", w.kind), attribute.Int("job.count", len(batch))))
 	outcomes := w.handler(ctx, batch)
+	span.End()
 	if len(outcomes) != len(batch) {
 		err := fmt.Errorf("handler returned %d outcomes for %d jobs", len(outcomes), len(batch))
 		outcomes = make([]Outcome, len(batch))

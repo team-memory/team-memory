@@ -1,0 +1,11 @@
+apiVersion: v2
+name: team-memory
+description: Self-hosted, permission-aware shared memory for AI coding agents (MCP server, web portal, embedding worker, git mirror)
+type: application
+version: 0.6.0
+appVersion: "0.6.0-dev"
+annotations:
+  artifacthub.io/license: Apache-2.0
+home: https://github.com/team-memory/team-memory
+keywords: [mcp, memory, ai-agents, pgvector]
+kubeVersion: ">=1.27.0-0"

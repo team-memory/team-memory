@@ -15,6 +15,8 @@ This repository holds both the service code and the planning material (`proposal
 - MCP over Streamable HTTP with eight tools and four resource views. Serves protocol 2026-07-28 and older clients that use the `initialize` handshake.
 - Personal access tokens: shown once, stored hashed, with expiry and revocation. There is no unauthenticated mode.
 - Optional SSO: Team Memory acts as the OAuth 2.1 authorization server for MCP clients and delegates sign-in to any OpenID Connect provider you configure. It issues its own short-lived tokens for the `/mcp` endpoint, keeps its state in PostgreSQL (restarts and replicas are fine), and can map IdP groups to scope roles. Claude Code and Codex sign in with no client-side setup. See `docs/decisions/identity-provider.md`.
+- One-way git mirror (optional): every exportable lifecycle event becomes a commit in a private repository per scope, through go-git (no `git` binary), idempotent and serialized per repository, with `mirror verify` and a documented disaster-recovery rebuild. See `docs/operations/mirror.md`.
+- Operations: one distroless container image, a Helm chart with NetworkPolicies and a migration hook, Prometheus metrics, OpenTelemetry traces, example alerts, pgBackRest backups with a measured restore drill, load tests and runbooks. See `docs/operations/`.
 - Security layers: separate database roles, PostgreSQL row-level security forced on every tenant table, role checks per tool, revision-bound review (approval and promotion only through browser review, never MCP), an append-only audit log, secret scanning, request limits and untrusted-data framing. See `docs/security/threat-model.md`.
 
 ## Quickstart (local)
@@ -162,6 +164,10 @@ Resources: `memory://scopes/{scope-path}/{overview|decisions|conventions|recent}
 
 Treat retrieved memory content as untrusted data: it is written by people and agents and may contain instructions. Every result that carries memory content starts with an `UNTRUSTED DATA` notice. Example agent policies: `docs/agent-policy/`.
 
+## Deploying
+
+Kubernetes with Helm: start with `docs/operations/authentication.md` (Secrets, order of operations, solo and SSO), then `docs/operations/deploy.md`. Runbooks: `upgrade.md` (staged rollout, migration policy, rollback), `backup-restore.md`, `rotate-secrets.md`, `dead-letters.md`, `incident.md`, `secret-purge.md`, `mirror.md`, `observability.md`. Measured numbers: `load-test-report.md`, `restore-drill-report.md`.
+
 ## Development
 
 ```bash
@@ -170,9 +176,9 @@ make test
 
 `make test` runs unit tests and integration tests against real PostgreSQL. Each integration test creates and drops its own database.
 
-Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`, `make worker`, `make eval` (retrieval evaluation against a real model, see `docs/eval/retrieval-report.md`) and `make bench-vector` (vector index benchmark).
+Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`, `make worker`, `make eval` (retrieval evaluation against a real model, see `docs/eval/retrieval-report.md`) and `make bench-vector` (vector index benchmark). Stage 06 adds `make image`, `make helm-lint`, `make check-alerts`, `make secret-scan`, `make dev-git-up` and `make test-mirror-remote` (authenticated mirror tests against a disposable Gitea), `make k3d-up`/`k3d-down` (disposable cluster), `make rollback-drill`, `make backup-drill` and `make loadtest`.
 
-Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap, identity mapping), `internal/auth/oauth` (authorization server facade), `internal/server` (HTTP assembly and readiness), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `docs/`.
+Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap, identity mapping), `internal/auth/oauth` (authorization server facade), `internal/server` (HTTP assembly and readiness), `internal/mirror` (git export, verify, rebuild), `internal/telemetry` (metrics and tracing), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `loadtest/`, `deploy/` (Helm chart, backups, dev environments), `docs/`.
 
 ## License
 

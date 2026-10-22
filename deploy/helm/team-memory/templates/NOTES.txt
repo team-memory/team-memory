@@ -1,0 +1,28 @@
+Team Memory {{ .Chart.AppVersion }} is installed as {{ include "team-memory.fullname" . }}.
+
+1. Wait for readiness:
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "team-memory.fullname" . }}-api
+
+2. First install only: establish the owner (prints a personal access token once):
+     deploy/helm/team-memory/scripts/tm-admin.sh {{ .Release.Namespace }} {{ include "team-memory.fullname" . }} \
+       init --org acme --owner "Your Name"
+
+3. Smoke test through the ingress:
+     curl -fsS {{ .Values.publicURL }}/.well-known/oauth-protected-resource{{ if not .Values.sso.enabled }}  # SSO only{{ end }}
+     helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+MCP endpoint: {{ .Values.publicURL }}/mcp
+{{- if .Values.portal.enabled }}
+Portal:       {{ .Values.publicURL }}{{ .Values.portal.basePath }}
+{{- end }}
+{{- if .Values.sso.enabled }}
+Register these redirect URIs at your IdPs:
+{{- range .Values.sso.providers }}
+  {{ $.Values.publicURL }}/oauth/callback/{{ .id }}
+{{- end }}
+{{- end }}
+{{- if not (include "team-memory.workerEnabled" .) }}
+
+Note: embeddings.ollamaURL is empty, so search is full-text only and no embedding worker runs.
+{{- end }}
+See docs/operations/ for runbooks.

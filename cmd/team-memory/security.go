@@ -41,16 +41,16 @@ var loginName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 // (CREATEROLE or superuser), typically the cluster administrator.
 func dbCmd(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] != "create-login" {
-		return errors.New("usage: team-memory db create-login --role app|worker|operator --user NAME")
+		return errors.New("usage: team-memory db create-login --role app|worker|mirror|operator --user NAME")
 	}
 	fs := flag.NewFlagSet("db create-login", flag.ExitOnError)
-	role := fs.String("role", "", "app (serve), worker or operator (required)")
+	role := fs.String("role", "", "app (serve), worker (embeddings), mirror (git export) or operator (required)")
 	user := fs.String("user", "", "login role name to create (required)")
 	_ = fs.Parse(args[1:])
-	groups := map[string]string{"app": postgres.RoleApp, "worker": postgres.RoleWorker, "operator": postgres.RoleOperator}
+	groups := map[string]string{"app": postgres.RoleApp, "worker": postgres.RoleWorker, "mirror": postgres.RoleMirror, "operator": postgres.RoleOperator}
 	group, ok := groups[*role]
 	if !ok {
-		return errors.New("--role must be app, worker or operator")
+		return errors.New("--role must be app, worker, mirror or operator")
 	}
 	if !loginName.MatchString(*user) {
 		return errors.New("--user must be a lowercase identifier")
@@ -65,6 +65,11 @@ func dbCmd(ctx context.Context, args []string) error {
 		password = base64.RawURLEncoding.EncodeToString(b)
 	}
 	return withPool(ctx, func(pool *pgxpool.Pool) error {
+		// The group roles come from migration 00003 (and 00007 for mirror),
+		// so a fresh database is migrated first, as init does.
+		if err := postgres.Migrate(ctx, pool); err != nil {
+			return err
+		}
 		// Identifiers are validated above; the password is passed as a
 		// literal through format(%L) on the server, never concatenated.
 		var stmt string

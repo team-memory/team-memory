@@ -1,0 +1,87 @@
+{{- if .Values.mirror.enabled }}
+{{- $_ := required "mirror.remote is required when the mirror is enabled" .Values.mirror.remote }}
+{{- $secret := required "mirror.existingSecret is required when the mirror is enabled" .Values.mirror.existingSecret }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "team-memory.fullname" . }}-mirror
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mirror
+spec:
+  replicas: {{ .Values.mirror.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "team-memory.selector" (list . "mirror") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "team-memory.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mirror
+      {{- with .Values.mirror.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "team-memory.podSecurity" . | nindent 6 }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: mirror
+          image: {{ include "team-memory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["mirror", "worker"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - {name: metrics, containerPort: 9090}
+          env:
+            - name: TEAM_MEMORY_MIRROR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "team-memory.dbSecret" . }}
+                  key: {{ .Values.database.keys.mirror }}
+            {{- include "team-memory.mirrorEnv" . | nindent 12 }}
+            {{- include "team-memory.commonEnv" (dict "root" . "component" "mirror") | nindent 12 }}
+            {{- with .Values.mirror.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: metrics}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mirror.resources | nindent 12 }}
+          volumeMounts:
+            - {name: cache, mountPath: /tmp}
+            - {name: credentials, mountPath: /etc/team-memory/mirror, readOnly: true}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        # Bare clones; disposable (re-cloned after a reschedule).
+        - name: cache
+          emptyDir: {sizeLimit: {{ .Values.mirror.cacheSizeLimit }}}
+        - name: credentials
+          secret:
+            secretName: {{ $secret }}
+            defaultMode: 0440
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.mirror.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mirror.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mirror.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -24,6 +24,7 @@ const (
 	AppUser      = "tm_test_app"
 	WorkerUser   = "tm_test_worker"
 	OperatorUser = "tm_test_operator"
+	MirrorUser   = "tm_test_mirror"
 	testPassword = "tm-test-only"
 )
 
@@ -38,6 +39,7 @@ func New(t testing.TB) *pgxpool.Pool {
 // DB holds pools on one test database, one per database role.
 type DB struct {
 	Name string
+	url  url.URL // TEST_DATABASE_URL pointing at this database
 	// Admin is TEST_DATABASE_URL's role: fixture setup and assertions.
 	Admin *pgxpool.Pool
 	// App connects as a member of team_memory_app, like serve. Guard counts
@@ -48,6 +50,8 @@ type DB struct {
 	Worker *pgxpool.Pool
 	// Operator connects as a non-superuser member of team_memory_operator.
 	Operator *pgxpool.Pool
+	// Mirror connects as a member of team_memory_mirror (git export).
+	Mirror *pgxpool.Pool
 }
 
 // NewDB creates and migrates a database and connects one pool per role.
@@ -83,9 +87,9 @@ func NewDB(t testing.TB) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &DB{Name: name, Admin: pool}
+	d := &DB{Name: name, Admin: pool, url: *u}
 	t.Cleanup(func() {
-		for _, p := range []*pgxpool.Pool{d.App, d.Worker, d.Operator, d.Admin} {
+		for _, p := range []*pgxpool.Pool{d.App, d.Worker, d.Operator, d.Mirror, d.Admin} {
 			if p != nil {
 				p.Close()
 			}
@@ -114,12 +118,28 @@ func NewDB(t testing.TB) *DB {
 	d.App = connect(AppUser, d.Guard)
 	d.Worker = connect(WorkerUser, nil)
 	d.Operator = connect(OperatorUser, nil)
+	d.Mirror = connect(MirrorUser, nil)
 	t.Cleanup(func() {
 		if n := d.Guard.Violations(); n > 0 {
 			t.Errorf("%d statements ran outside a transaction on the app pool", n)
 		}
 	})
 	return d
+}
+
+// Connect opens another pool on this database as one of the test login
+// roles (AppUser, WorkerUser, ...) with a query tracer. It is closed when
+// the test ends.
+func (d *DB) Connect(t testing.TB, user string, tracer pgx.QueryTracer) *pgxpool.Pool {
+	t.Helper()
+	u := d.url
+	u.User = url.UserPassword(user, testPassword)
+	p, err := postgres.OpenWithTracer(context.Background(), u.String(), tracer)
+	if err != nil {
+		t.Fatalf("connect as %s: %v", user, err)
+	}
+	t.Cleanup(p.Close)
+	return p
 }
 
 // ensureLoginRoles creates the cluster-wide test login roles once. An
@@ -138,6 +158,7 @@ func ensureLoginRoles(t testing.TB, pool *pgxpool.Pool) {
 	defer func() { _, _ = conn.Exec(ctx, "SELECT pg_advisory_unlock(hashtext('tm_test_roles'))") }()
 	for user, group := range map[string]string{
 		AppUser: postgres.RoleApp, WorkerUser: postgres.RoleWorker, OperatorUser: postgres.RoleOperator,
+		MirrorUser: postgres.RoleMirror,
 	} {
 		var exists bool
 		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", user).Scan(&exists); err != nil {

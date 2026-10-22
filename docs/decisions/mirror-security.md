@@ -35,7 +35,7 @@ The export worker rescans every field it writes with `internal/secrets` (the sam
 
 ## Archive and purge
 
-- **Archive** is a lifecycle event like any other. It is exported as a commit that moves the memory's file under `archived/` (or sets `status: archived` in frontmatter; stage 06 picks one) and keeps history. Archive is not deletion.
+- **Archive** is a lifecycle event like any other. It is exported as a commit that moves the memory's file under `archived/` (or sets `status: archived` in frontmatter; stage 06 picks one) and keeps history. Archive is not deletion. *Stage 06 chose `status: "archived"` in frontmatter with the file left in place, so `git log -- <file>` shows a memory's whole life (docs/operations/mirror.md).*
 - **Purge** (accidental secret, legal request) is an exceptional, operator-authorized procedure. It is outside application privileges and defined in the stage 06 runbook. For the mirror it means: rotate the exposed credential first; rewrite the affected repository's history to drop the content (go-git cannot force-push to every host's protection rules, so the runbook names the manual steps); delete and recreate the remote if the host keeps unreachable objects; and record which clones and backups may still hold it. Copies already downloaded cannot be recalled, and the runbook says so.
 - After a purge, the database marks the affected events as purged, so a redelivery cannot re-export them.
 

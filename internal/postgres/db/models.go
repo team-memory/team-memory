@@ -154,6 +154,12 @@ type MemoryRevision struct {
 	Search     interface{}
 }
 
+type MirrorSetting struct {
+	Singleton bool
+	Enabled   bool
+	UpdatedAt time.Time
+}
+
 type MirrorState struct {
 	EventID       uuid.UUID
 	Repository    string
@@ -163,6 +169,9 @@ type MirrorState struct {
 	Attempts      int32
 	ExportedAt    *time.Time
 	UpdatedAt     time.Time
+	MemoryID      uuid.UUID
+	EventSeq      int64
+	LastError     *string
 }
 
 type OauthAuthRequest struct {

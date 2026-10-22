@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -221,6 +222,91 @@ func (q *Queries) JobCounts(ctx context.Context) ([]JobCountsRow, error) {
 	for rows.Next() {
 		var i JobCountsRow
 		if err := rows.Scan(&i.Kind, &i.Status, &i.Jobs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDeadJobs = `-- name: ListDeadJobs :many
+SELECT id, kind, attempts, max_attempts, coalesce(last_error, '')::text AS last_error, payload, updated_at
+FROM jobs
+WHERE status = 'dead' AND ($1::text = '' OR kind = $1::text)
+ORDER BY updated_at DESC
+LIMIT $2::integer
+`
+
+type ListDeadJobsParams struct {
+	Kind    string
+	MaxRows int32
+}
+
+type ListDeadJobsRow struct {
+	ID          int64
+	Kind        string
+	Attempts    int32
+	MaxAttempts int32
+	LastError   string
+	Payload     []byte
+	UpdatedAt   time.Time
+}
+
+// Dead-lettered jobs for inspection (operator).
+func (q *Queries) ListDeadJobs(ctx context.Context, arg ListDeadJobsParams) ([]ListDeadJobsRow, error) {
+	rows, err := q.db.Query(ctx, listDeadJobs, arg.Kind, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeadJobsRow
+	for rows.Next() {
+		var i ListDeadJobsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Attempts,
+			&i.MaxAttempts,
+			&i.LastError,
+			&i.Payload,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const oldestReadyJobAge = `-- name: OldestReadyJobAge :many
+SELECT kind, extract(epoch FROM now() - min(run_after))::float8 AS age_seconds
+FROM jobs
+WHERE status = 'pending' AND run_after <= now()
+GROUP BY kind
+`
+
+type OldestReadyJobAgeRow struct {
+	Kind       string
+	AgeSeconds float64
+}
+
+// Age of the oldest job that is ready to run, per kind (queue backlog).
+func (q *Queries) OldestReadyJobAge(ctx context.Context) ([]OldestReadyJobAgeRow, error) {
+	rows, err := q.db.Query(ctx, oldestReadyJobAge)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OldestReadyJobAgeRow
+	for rows.Next() {
+		var i OldestReadyJobAgeRow
+		if err := rows.Scan(&i.Kind, &i.AgeSeconds); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

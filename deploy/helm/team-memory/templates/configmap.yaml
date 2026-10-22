@@ -1,0 +1,46 @@
+{{- $publicURL := required "publicURL is required (the exact browser origin, e.g. https://memory.example.com)" .Values.publicURL -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "team-memory.fullname" . }}
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+data:
+  TEAM_MEMORY_PUBLIC_URL: {{ $publicURL | quote }}
+  TEAM_MEMORY_LISTEN: ":8080"
+  TEAM_MEMORY_DEFAULT_SCOPE: {{ .Values.defaultScope | quote }}
+  TEAM_MEMORY_RATE_LIMIT: {{ .Values.api.rateLimit | quote }}
+  TEAM_MEMORY_RATE_BURST: {{ .Values.api.rateBurst | quote }}
+  TEAM_MEMORY_SHUTDOWN_DELAY: {{ .Values.api.shutdownDelay | quote }}
+  TEAM_MEMORY_SHUTDOWN_TIMEOUT: {{ .Values.api.shutdownTimeout | quote }}
+  TEAM_MEMORY_TRUSTED_PROXIES: {{ join "," .Values.trustedProxies | quote }}
+  TEAM_MEMORY_QUERY_EMBED_TIMEOUT: {{ .Values.embeddings.queryEmbedTimeout | quote }}
+  TEAM_MEMORY_PORTAL: {{ ternary "on" "off" .Values.portal.enabled | quote }}
+  TEAM_MEMORY_PORTAL_BASE_PATH: {{ .Values.portal.basePath | quote }}
+  TEAM_MEMORY_PORTAL_TOKEN_SIGNIN: {{ .Values.portal.tokenSignIn | quote }}
+  TEAM_MEMORY_PORTAL_IDLE_TIMEOUT: {{ .Values.portal.idleTimeout | quote }}
+  TEAM_MEMORY_PORTAL_ABSOLUTE_TIMEOUT: {{ .Values.portal.absoluteTimeout | quote }}
+  TEAM_MEMORY_PORTAL_SOURCE_SCHEMES: {{ join "," .Values.portal.sourceSchemes | quote }}
+  TEAM_MEMORY_PORTAL_CSP_EXTRA: {{ .Values.portal.cspExtra | quote }}
+  TEAM_MEMORY_PORTAL_RATE_LIMIT: {{ .Values.portal.rateLimit | quote }}
+  TEAM_MEMORY_PORTAL_RATE_BURST: {{ .Values.portal.rateBurst | quote }}
+  {{- if .Values.sso.enabled }}
+  TEAM_MEMORY_SSO_CONFIG: /etc/team-memory/sso/sso.json
+  sso.json: |
+    {{- $providers := list }}
+    {{- range .Values.sso.providers }}
+    {{- $p := dict "id" (required "sso.providers[].id is required" .id) "display_name" (default .id .displayName) "issuer" (required "sso.providers[].issuer is required" .issuer) "client_id" (required "sso.providers[].clientID is required" .clientID) "client_secret_file" (printf "/etc/team-memory/idp/%s/client-secret" .id) }}
+    {{- with .scopes }}{{ $_ := set $p "scopes" . }}{{ end }}
+    {{- with .allowedEmailDomains }}{{ $_ := set $p "allowed_email_domains" . }}{{ end }}
+    {{- with .allowedGroups }}{{ $_ := set $p "allowed_groups" . }}{{ end }}
+    {{- with .groupsClaim }}{{ $_ := set $p "groups_claim" . }}{{ end }}
+    {{- if hasKey . "autoProvision" }}{{ $_ := set $p "auto_provision" .autoProvision }}{{ end }}
+    {{- if .syncGroupRoles }}{{ $_ := set $p "sync_group_roles" true }}{{ end }}
+    {{- $providers = append $providers $p }}
+    {{- end }}
+    {{- $reg := dict "client_id_metadata_documents" .Values.sso.clientRegistration.clientIDMetadataDocuments "dynamic" .Values.sso.clientRegistration.dynamic "allow_remote_redirect_uris" .Values.sso.clientRegistration.allowRemoteRedirectURIs }}
+    {{- with .Values.sso.clientRegistration.cimdAllowedHosts }}{{ $_ := set $reg "cimd_allowed_hosts" . }}{{ end }}
+    {{- $cfg := dict "issuer" $publicURL "signing_keys_dir" "/etc/team-memory/signing" "access_token_ttl" .Values.sso.accessTokenTTL "refresh_token_ttl" .Values.sso.refreshTokenTTL "client_registration" $reg "providers" $providers }}
+    {{- with .Values.sso.signingKeys.activeSigningKey }}{{ $_ := set $cfg "active_signing_key" . }}{{ end }}
+    {{- $cfg | toPrettyJson | nindent 4 }}
+  {{- end }}

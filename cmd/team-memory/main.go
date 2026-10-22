@@ -1,7 +1,7 @@
 // Command team-memory runs the Team Memory server and its operator CLI.
 //
 // Operator subcommands (init, scope, principal, member, token, memory, idp,
-// audit, embeddings, jobs) connect as the operator role (DATABASE_URL) and
+// audit, embeddings, jobs, mirror) connect as the operator role (DATABASE_URL) and
 // are trusted by virtue of that access. serve connects as the app role
 // (TEAM_MEMORY_APP_DATABASE_URL) and worker as the worker role
 // (TEAM_MEMORY_WORKER_DATABASE_URL); both refuse to start with a role that
@@ -30,11 +30,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/team-memory/team-memory/internal/auth"
+	"github.com/team-memory/team-memory/internal/mcp"
 	"github.com/team-memory/team-memory/internal/memory"
 	"github.com/team-memory/team-memory/internal/portal"
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
 	"github.com/team-memory/team-memory/internal/server"
+	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
 const usage = `usage: team-memory <command> [flags]
@@ -57,7 +59,11 @@ commands:
   worker                        run embedding jobs for the configured model
   embeddings add-model|list|enable|disable
                                 manage embedding models and their indexes
-  jobs status|retry-dead        inspect the job queue, requeue dead-lettered jobs
+  jobs status|dead|retry-dead   inspect the job queue and dead letters, requeue them
+  healthcheck                   probe this container's /healthz (Docker HEALTHCHECK)
+  version                       print the version
+  mirror enable|status|worker|verify|requeue|mark-purged|rebuild
+                                one-way git mirror (see docs/operations/mirror.md)
 
 Configuration comes from the environment: DATABASE_URL (operator role),
 TEAM_MEMORY_APP_DATABASE_URL (serve), TEAM_MEMORY_WORKER_DATABASE_URL (worker), TEAM_MEMORY_LISTEN,
@@ -114,6 +120,13 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return embeddingsCmd(ctx, args)
 	case "jobs":
 		return jobsCmd(ctx, args)
+	case "mirror":
+		return mirrorCmd(ctx, args)
+	case "healthcheck":
+		return healthcheck(ctx, args)
+	case "version":
+		fmt.Println(mcp.Version)
+		return nil
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return nil
@@ -187,6 +200,12 @@ func portalConfig() (cfg portal.Config, disabled bool, err error) {
 			*dst = d
 		}
 	}
+	if cfg.RatePerSecond, err = envFloat("TEAM_MEMORY_PORTAL_RATE_LIMIT", 0); err != nil {
+		return cfg, false, err
+	}
+	if cfg.Burst, err = envInt("TEAM_MEMORY_PORTAL_RATE_BURST", 0); err != nil {
+		return cfg, false, err
+	}
 	for _, s := range strings.Split(os.Getenv("TEAM_MEMORY_PORTAL_SOURCE_SCHEMES"), ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			cfg.SourceSchemes = append(cfg.SourceSchemes, s)
@@ -220,9 +239,28 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	trusted, err := server.ParseTrustedProxies(os.Getenv("TEAM_MEMORY_TRUSTED_PROXIES"))
+	if err != nil {
+		return err
+	}
+	shutdownDelay, err := envDuration("TEAM_MEMORY_SHUTDOWN_DELAY", 3*time.Second)
+	if err != nil {
+		return err
+	}
+	shutdownTimeout, err := envDuration("TEAM_MEMORY_SHUTDOWN_TIMEOUT", 20*time.Second)
+	if err != nil {
+		return err
+	}
+	metrics, stopTracing, err := startTelemetry(ctx, "serve", logger)
+	if err != nil {
+		return err
+	}
+	defer stopTracing()
 	guard := &postgres.TxGuard{Logger: logger}
-	return withRuntimePool(ctx, "TEAM_MEMORY_APP_DATABASE_URL", postgres.RoleApp, guard, func(pool *pgxpool.Pool) error {
-		srch, err := newSearch(ctx, pool, logger)
+	tracer := telemetry.MultiTracer{guard, telemetry.PGXTracer{}}
+	return withRuntimePool(ctx, "TEAM_MEMORY_APP_DATABASE_URL", postgres.RoleApp, tracer, func(pool *pgxpool.Pool) error {
+		metrics.RegisterPool(pool, "app")
+		srch, err := newSearch(ctx, pool, logger, metrics)
 		if err != nil {
 			return err
 		}
@@ -230,9 +268,10 @@ func serve(ctx context.Context, args []string) error {
 			Pool: pool, Search: srch, Logger: logger, DefaultScope: *defaultScope,
 			SSOConfigPath: os.Getenv("TEAM_MEMORY_SSO_CONFIG"), PublicURL: os.Getenv("TEAM_MEMORY_PUBLIC_URL"),
 			RatePerSecond: rate, RateBurst: burst,
-			Portal: pcfg, DisablePortal: pdisabled,
+			Portal: pcfg, DisablePortal: pdisabled, Metrics: metrics, TrustedProxies: trusted,
 		})
 		handler.Start(ctx)
+		serveOps(ctx, logger, metrics, nil, handler.Ready)
 		srv := &http.Server{Addr: *listen, Handler: logRequests(logger, handler), ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
 			MaxHeaderBytes: 64 << 10}
@@ -243,7 +282,14 @@ func serve(ctx context.Context, args []string) error {
 		case err := <-errc:
 			return err
 		case <-ctx.Done():
-			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			// Graceful shutdown: fail readiness first so endpoints are
+			// removed, keep serving for the delay, then drain in-flight
+			// requests within the timeout (Kubernetes'
+			// terminationGracePeriodSeconds must exceed delay + timeout).
+			logger.Info("shutting down", "delay", shutdownDelay, "timeout", shutdownTimeout)
+			handler.Drain()
+			time.Sleep(shutdownDelay)
+			shutdown, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
 			return srv.Shutdown(shutdown)
 		}
@@ -288,7 +334,7 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 			mcpMethod = jsonRPCMethod(captured.buf.Bytes())
 		}
 		logger.Info("request", "method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"request_id", w.Header().Get("X-Request-Id"),
+			"request_id", w.Header().Get("X-Request-Id"), "trace_id", w.Header().Get("X-Trace-Id"),
 			"mcp_protocol_version", truncate(r.Header.Get("Mcp-Protocol-Version"), 32), "mcp_method", truncate(mcpMethod, 64),
 			"user_agent", truncate(r.UserAgent(), 200), "duration_ms", time.Since(start).Milliseconds())
 	})

@@ -1,0 +1,115 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- if not $np.database.to }}{{ fail "networkPolicy.database.to is required: describe where PostgreSQL is (an ipBlock or selectors), or disable networkPolicy" }}{{ end }}
+{{- /*
+Default deny for every pod of this release, then one policy per component
+that allows exactly what it needs:
+  api      in: ingress controller -> 8080, scraper -> 9090
+           out: DNS, PostgreSQL, IdPs (SSO), Ollama (query embeddings), OTLP
+  worker   in: scraper -> 9090; out: DNS, PostgreSQL, Ollama, OTLP
+  mirror   in: scraper -> 9090; out: DNS, PostgreSQL, git remote, OTLP
+  migrate, verify-mirror (jobs): out: DNS, PostgreSQL (+ git remote)
+Backups run next to PostgreSQL, not in these pods, so no backup egress is
+needed here.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "team-memory.fullname" . }}-default-deny
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "team-memory.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+{{- $components := list "api" "migrate" }}
+{{- if include "team-memory.workerEnabled" . }}{{ $components = append $components "worker" }}{{ end }}
+{{- if .Values.mirror.enabled }}{{ $components = append $components "mirror" }}{{ $components = append $components "verify-mirror" }}{{ end }}
+{{- range $c := $components }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "team-memory.fullname" $ }}-{{ $c }}
+  labels:
+    {{- include "team-memory.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "team-memory.selector" (list $ $c) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- if eq $c "api" }}
+    - from:
+        {{- toYaml $np.ingressFrom | nindent 8 }}
+      ports: [{port: 8080, protocol: TCP}]
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "team-memory.selector" (list $ "smoke") | nindent 14 }}
+      ports: [{port: 8080, protocol: TCP}]
+    {{- end }}
+    {{- if has $c (list "api" "worker" "mirror") }}
+    - from:
+        {{- toYaml $np.metricsFrom | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+  egress:
+    - to:
+        {{- toYaml $np.dnsTo | nindent 8 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        {{- toYaml $np.database.to | nindent 8 }}
+      ports: [{port: {{ $np.database.port }}, protocol: TCP}]
+    {{- if and (eq $c "api") $.Values.sso.enabled }}
+    - to:
+        {{- toYaml $np.idp.to | nindent 8 }}
+      ports:
+        {{- range $np.idp.ports }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    {{- if and (has $c (list "api" "worker")) $.Values.embeddings.ollamaURL $np.embeddings.to }}
+    - to:
+        {{- toYaml $np.embeddings.to | nindent 8 }}
+      ports: [{port: {{ $np.embeddings.port }}, protocol: TCP}]
+    {{- end }}
+    {{- if and (has $c (list "mirror" "verify-mirror")) $np.mirrorRemote.to }}
+    - to:
+        {{- toYaml $np.mirrorRemote.to | nindent 8 }}
+      ports:
+        {{- range $np.mirrorRemote.ports }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    {{- end }}
+    {{- if and (has $c (list "api" "worker" "mirror")) $.Values.tracing.otlpEndpoint $np.telemetry.to }}
+    - to:
+        {{- toYaml $np.telemetry.to | nindent 8 }}
+      ports: [{port: {{ $np.telemetry.port }}, protocol: TCP}]
+    {{- end }}
+{{- end }}
+---
+# helm test pod: reaches the API Service only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "team-memory.fullname" . }}-smoke
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "team-memory.selector" (list . "smoke") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        {{- toYaml $np.dnsTo | nindent 8 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "team-memory.selector" (list . "api") | nindent 14 }}
+      ports: [{port: 8080, protocol: TCP}]
+{{- end }}

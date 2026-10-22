@@ -1,0 +1,43 @@
+{{- if .Values.ingress.enabled }}
+{{- $svc := include "team-memory.fullname" . }}
+{{- $port := .Values.service.port }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $svc }}
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    # One hostname serves MCP, the OAuth facade (including the IdP callback
+    # /oauth/callback/<id>), discovery and the portal: the portal's cookies,
+    # Origin check and SSO callback are bound to publicURL. /healthz,
+    # /readyz and metrics are deliberately not routed.
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          {{- $paths := list "/mcp" "/oauth" "/.well-known" }}
+          {{- if .Values.portal.enabled }}
+          {{- $paths = append $paths .Values.portal.basePath }}
+          {{- end }}
+          {{- range $paths }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc }}
+                port: {number: {{ $port }}}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,43 @@
+# Every optional feature on, for lint and template checks (not a deployment).
+publicURL: https://memory.example.com
+defaultScope: acme/default
+database:
+  existingSecret: team-memory-db
+trustedProxies: [10.42.0.0/16]
+embeddings:
+  ollamaURL: http://ollama.ollama.svc:11434
+sso:
+  enabled: true
+  signingKeys: {existingSecret: team-memory-signing}
+  providers:
+    - id: keycloak
+      displayName: Company SSO
+      issuer: https://sso.example.com/realms/example
+      clientID: team-memory
+      existingSecret: team-memory-idp-keycloak
+      allowedEmailDomains: [example.com]
+      syncGroupRoles: true
+    - id: google
+      issuer: https://accounts.google.com
+      clientID: 1234.apps.googleusercontent.com
+      existingSecret: team-memory-idp-google
+      autoProvision: false
+mirror:
+  enabled: true
+  remote: ssh://git@git.example.com/team-memory-mirror/{repo}.git
+  existingSecret: team-memory-mirror
+  verifyCronJob: {enabled: true}
+tracing:
+  otlpEndpoint: http://otel-collector.observability:4318
+metrics:
+  serviceMonitor: {enabled: true}
+  prometheusRule: {enabled: true}
+networkPolicy:
+  database:
+    to: [{ipBlock: {cidr: 10.0.0.5/32}}]
+  embeddings:
+    to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ollama}}}]
+  mirrorRemote:
+    to: [{ipBlock: {cidr: 203.0.113.10/32}}]
+  telemetry:
+    to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}}]

@@ -1,0 +1,57 @@
+# promtool unit tests for the example alerts:
+#   make check-alerts
+rule_files:
+  - ../helm/team-memory/files/prometheus-rules.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'team_memory_ready{pod="api-1"}'
+        values: '1 1 0 0 0 0 0'
+      - series: 'team_memory_jobs{kind="embed",status="dead",pod="worker-1"}'
+        values: '0 0 2 2 2 2 2 2 2 2'
+      - series: 'team_memory_jobs_oldest_pending_age_seconds{kind="embed",pod="worker-1"}'
+        values: '100+300x20'
+      - series: 'team_memory_mirror_secret_detected_total{repository="r1",pod="mirror-1"}'
+        values: '0 0 0 1 1 1'
+      - series: 'team_memory_worker_last_poll_timestamp_seconds{kind="git_mirror",pod="mirror-1"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TeamMemoryNotReady
+        exp_alerts:
+          - exp_labels: {severity: critical, pod: api-1}
+            exp_annotations:
+              summary: "Team Memory api-1 reports not ready"
+              description: "Readiness has failed for 2 minutes (database unreachable, or SSO configured but unusable). See docs/operations/incident.md."
+      - eval_time: 3m
+        alertname: TeamMemoryNotReady
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: TeamMemoryDeadLetters
+        exp_alerts:
+          - exp_labels: {severity: warning, kind: embed}
+            exp_annotations:
+              summary: "2 dead-lettered embed jobs"
+              description: "Inspect and replay with docs/operations/dead-letters.md."
+      - eval_time: 15m
+        alertname: TeamMemoryJobBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning, kind: embed, pod: worker-1}
+            exp_annotations:
+              summary: "embed jobs have waited more than 15 minutes"
+              description: "The oldest ready embed job is 1h 16m 40s old. Is the worker running, and is its dependency (Ollama or the git remote) up?"
+      - eval_time: 4m
+        alertname: TeamMemoryMirrorSecretDetected
+        exp_alerts:
+          - exp_labels: {severity: critical, repository: r1, pod: mirror-1}
+            exp_annotations:
+              summary: "A memory event was not exported because it contains a credential"
+              description: "Repository r1. Rotate the credential and follow docs/operations/secret-purge.md."
+      - eval_time: 16m
+        alertname: TeamMemoryWorkerStalled
+        exp_alerts:
+          - exp_labels: {severity: critical, kind: git_mirror, pod: mirror-1}
+            exp_annotations:
+              summary: "The git_mirror worker mirror-1 has not polled for 10 minutes"
+              description: "Its liveness probe should restart it; if this persists, check the pod and the database."

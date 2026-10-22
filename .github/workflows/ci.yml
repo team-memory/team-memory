@@ -41,3 +41,24 @@ jobs:
         run: make check-generate
       - name: Unit and integration tests
         run: go test -race -count=1 ./...
+      - name: No process execution in the service (go-git only)
+        run: go test -count=1 -run 'TestNoProcessExecution|TestFileTransportIsInProcess' ./internal/mirror/
+
+  deploy-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Helm lint and template
+        run: make helm-lint
+      - name: Alert rules (promtool check and unit tests)
+        run: make check-alerts
+      - name: Container image builds
+        run: docker build -t team-memory:ci .
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

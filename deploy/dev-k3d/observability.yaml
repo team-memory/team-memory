@@ -1,0 +1,68 @@
+# Test cluster only: Jaeger (OTLP/HTTP on 4318, UI on 16686) and a
+# Prometheus that scrapes the release's headless metrics Service by DNS and
+# loads the chart's example alert rules (ConfigMap prometheus-rules, created
+# by setup-observability.sh from deploy/helm/team-memory/files/).
+apiVersion: v1
+kind: Namespace
+metadata: {name: monitoring}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: jaeger, namespace: monitoring}
+spec:
+  selector: {matchLabels: {app: jaeger}}
+  template:
+    metadata: {labels: {app: jaeger}}
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.11.0
+          ports: [{containerPort: 4318}, {containerPort: 16686}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: jaeger, namespace: monitoring}
+spec:
+  selector: {app: jaeger}
+  ports: [{name: otlp-http, port: 4318}, {name: ui, port: 16686}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: prometheus-config, namespace: monitoring}
+data:
+  prometheus.yml: |
+    global: {scrape_interval: 10s, evaluation_interval: 10s}
+    rule_files: [/etc/prometheus/rules/prometheus-rules.yaml]
+    scrape_configs:
+      - job_name: team-memory
+        dns_sd_configs:
+          - names: [team-memory-metrics.team-memory.svc.cluster.local]
+            type: A
+            port: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: monitoring}
+spec:
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=2d]
+          ports: [{containerPort: 9090}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml}
+            - {name: rules, mountPath: /etc/prometheus/rules}
+      volumes:
+        - {name: config, configMap: {name: prometheus-config}}
+        - {name: rules, configMap: {name: prometheus-rules}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: monitoring}
+spec:
+  selector: {app: prometheus}
+  ports: [{port: 9090}]

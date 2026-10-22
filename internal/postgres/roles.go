@@ -18,6 +18,8 @@ const (
 	RoleApp      = "team_memory_app"
 	RoleWorker   = "team_memory_worker"
 	RoleOperator = "team_memory_operator"
+	// RoleMirror (migration 00007) is the git mirror export worker.
+	RoleMirror = "team_memory_mirror"
 )
 
 // RoleInfo describes the role a pool connects as.
@@ -29,6 +31,7 @@ type RoleInfo struct {
 	OwnsTables bool
 	App        bool
 	Worker     bool
+	Mirror     bool
 }
 
 // InspectRole reports the privileges of the pool's connection role. Before
@@ -55,9 +58,11 @@ SELECT current_user, r.rolsuper, r.rolbypassrls,
                WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
                  AND pg_has_role(current_user, c.relowner, 'USAGE')),
        pg_has_role(current_user, $2, 'USAGE'),
-       pg_has_role(current_user, $3, 'USAGE')
-FROM pg_roles r WHERE r.rolname = current_user`, RoleOperator, RoleApp, RoleWorker).Scan(
-		&ri.User, &ri.Superuser, &ri.BypassRLS, &ri.Operator, &ri.OwnsTables, &ri.App, &ri.Worker)
+       pg_has_role(current_user, $3, 'USAGE'),
+       CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $4)
+            THEN pg_has_role(current_user, $4, 'USAGE') ELSE false END
+FROM pg_roles r WHERE r.rolname = current_user`, RoleOperator, RoleApp, RoleWorker, RoleMirror).Scan(
+		&ri.User, &ri.Superuser, &ri.BypassRLS, &ri.Operator, &ri.OwnsTables, &ri.App, &ri.Worker, &ri.Mirror)
 	if err != nil {
 		return ri, false, fmt.Errorf("inspect database role: %w", err)
 	}
@@ -69,7 +74,7 @@ FROM pg_roles r WHERE r.rolname = current_user`, RoleOperator, RoleApp, RoleWork
 var ErrUnsafeRole = errors.New("unsafe database role")
 
 // CheckRuntimeRole fails closed unless the pool's role is a plain member of
-// want (RoleApp or RoleWorker): not a superuser, without BYPASSRLS, not an
+// want (RoleApp, RoleWorker or RoleMirror): not a superuser, without BYPASSRLS, not an
 // operator, and owning no tables. serve and worker refuse to start
 // otherwise; there is no override.
 func CheckRuntimeRole(ctx context.Context, pool *pgxpool.Pool, want string) error {
@@ -93,23 +98,17 @@ func CheckRuntimeRole(ctx context.Context, pool *pgxpool.Pool, want string) erro
 	if ri.OwnsTables {
 		problems = append(problems, "owns Team Memory tables")
 	}
-	switch want {
-	case RoleApp:
-		if !ri.App {
-			problems = append(problems, "is not a member of "+RoleApp)
-		}
-		if ri.Worker {
-			problems = append(problems, "is also a member of "+RoleWorker)
-		}
-	case RoleWorker:
-		if !ri.Worker {
-			problems = append(problems, "is not a member of "+RoleWorker)
-		}
-		if ri.App {
-			problems = append(problems, "is also a member of "+RoleApp)
-		}
-	default:
+	members := map[string]bool{RoleApp: ri.App, RoleWorker: ri.Worker, RoleMirror: ri.Mirror}
+	if _, known := members[want]; !known {
 		return fmt.Errorf("unknown runtime role %q", want)
+	}
+	if !members[want] {
+		problems = append(problems, "is not a member of "+want)
+	}
+	for _, other := range []string{RoleApp, RoleWorker, RoleMirror} {
+		if other != want && members[other] {
+			problems = append(problems, "is also a member of "+other)
+		}
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%w: database user %q %s; connect as a login role that is a member of %s only (see docs/decisions/rls.md)",

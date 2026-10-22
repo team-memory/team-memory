@@ -1,0 +1,32 @@
+name: team-memory-dev-git
+# Disposable Gitea for mirror tests: HTTPS (self-signed) on 127.0.0.1:3443
+# and its built-in SSH server on 127.0.0.1:2222. setup.sh creates the
+# certificate, an admin, a token, a repository and a deploy key in .local/.
+# Never reuse anything here outside a laptop.
+services:
+  gitea:
+    image: gitea/gitea:1.25.3-rootless
+    environment:
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__PROTOCOL: https
+      GITEA__server__HTTP_PORT: "3443"
+      GITEA__server__DOMAIN: localhost
+      GITEA__server__ROOT_URL: https://localhost:3443/
+      GITEA__server__CERT_FILE: /certs/cert.pem
+      GITEA__server__KEY_FILE: /certs/key.pem
+      GITEA__server__START_SSH_SERVER: "true"
+      GITEA__server__SSH_PORT: "2222"
+      GITEA__server__SSH_LISTEN_PORT: "2222"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__log__LEVEL: warn
+    ports:
+      - "127.0.0.1:3443:3443"
+      - "127.0.0.1:2222:2222"
+    volumes:
+      - ./.local/certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate -O /dev/null https://localhost:3443/api/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60

@@ -1,0 +1,52 @@
+{{- if and .Values.mirror.enabled .Values.mirror.verifyCronJob.enabled }}
+# Compares every mirror repository with the database (team-memory mirror
+# verify). A failed job (exit 3) means drift; alert on failed jobs.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "team-memory.fullname" . }}-verify-mirror
+  labels:
+    {{- include "team-memory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: verify-mirror
+spec:
+  schedule: {{ .Values.mirror.verifyCronJob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "team-memory.labels" . | nindent 12 }}
+            app.kubernetes.io/component: verify-mirror
+        spec:
+          restartPolicy: Never
+          {{- include "team-memory.podSecurity" . | nindent 10 }}
+          containers:
+            - name: verify
+              image: {{ include "team-memory.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["mirror", "verify"]
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "team-memory.dbSecret" . }}
+                      key: {{ .Values.database.keys.operator }}
+                {{- include "team-memory.mirrorEnv" . | nindent 16 }}
+              volumeMounts:
+                - {name: cache, mountPath: /tmp}
+                - {name: credentials, mountPath: /etc/team-memory/mirror, readOnly: true}
+          volumes:
+            - name: cache
+              emptyDir: {sizeLimit: {{ .Values.mirror.cacheSizeLimit }}}
+            - name: credentials
+              secret:
+                secretName: {{ .Values.mirror.existingSecret }}
+                defaultMode: 0440
+{{- end }}

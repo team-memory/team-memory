@@ -1,0 +1,6 @@
+publicURL: https://memory.example.com
+database:
+  existingSecret: team-memory-db
+networkPolicy:
+  database:
+    to: [{ipBlock: {cidr: 10.0.0.5/32}}]

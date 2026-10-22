@@ -1,0 +1,150 @@
+# Example alerts for Team Memory. Plain Prometheus rule groups: load this
+# file directly, or let the chart wrap it in a PrometheusRule
+# (metrics.prometheusRule.enabled). Validated with `promtool check rules`
+# and unit-tested by deploy/observability/alerts-test.yaml (make check-alerts).
+# Thresholds follow the initial engineering targets in proposal.md; tune
+# them to measured baselines (docs/operations/load-test-report.md).
+groups:
+  - name: team-memory.availability
+    rules:
+      - alert: TeamMemoryNotReady
+        expr: team_memory_ready == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Team Memory {{ $labels.pod }} reports not ready"
+          description: "Readiness has failed for 2 minutes (database unreachable, or SSO configured but unusable). See docs/operations/incident.md."
+      - alert: TeamMemoryAPIAbsent
+        expr: absent(team_memory_build_info{component="serve"})
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "No Team Memory API instance is being scraped"
+          description: "No serve process has exported metrics for 10 minutes."
+      - alert: TeamMemoryHighErrorRate
+        expr: |
+          sum(rate(team_memory_http_requests_total{code="5xx"}[5m]))
+            / clamp_min(sum(rate(team_memory_http_requests_total[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of Team Memory requests fail with 5xx"
+          description: "5xx ratio {{ $value | humanizePercentage }} over 10 minutes."
+
+  - name: team-memory.latency
+    rules:
+      - alert: TeamMemorySearchSlow
+        # Includes query embedding; the 500 ms target excludes it, so this
+        # fires only when the whole call is clearly beyond target.
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(team_memory_mcp_tool_duration_seconds_bucket{tool="memory_search"}[10m]))) > 0.75
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "memory_search p95 above 750 ms"
+          description: "p95 {{ $value | humanizeDuration }} over 15 minutes (target: 500 ms excluding query embedding)."
+      - alert: TeamMemoryWriteSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(team_memory_mcp_tool_duration_seconds_bucket{tool=~"memory_create|memory_update"}[10m]))) > 0.3
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Write p95 above 300 ms"
+          description: "memory_create/memory_update p95 {{ $value | humanizeDuration }} over 15 minutes."
+      - alert: TeamMemoryDBPoolSaturated
+        expr: team_memory_db_pool_acquired_connections / team_memory_db_pool_max_connections > 0.9
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Database pool {{ $labels.pool }} on {{ $labels.pod }} is over 90% in use"
+          description: "Raise pool_max_conns (and PostgreSQL max_connections) or add replicas."
+
+  - name: team-memory.jobs
+    rules:
+      - alert: TeamMemoryJobBacklog
+        expr: team_memory_jobs_oldest_pending_age_seconds > 900
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.kind }} jobs have waited more than 15 minutes"
+          description: "The oldest ready {{ $labels.kind }} job is {{ $value | humanizeDuration }} old. Is the worker running, and is its dependency (Ollama or the git remote) up?"
+      - alert: TeamMemoryDeadLetters
+        expr: max by (kind) (team_memory_jobs{status="dead"}) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} dead-lettered {{ $labels.kind }} jobs"
+          description: "Inspect and replay with docs/operations/dead-letters.md."
+      - alert: TeamMemoryWorkerStalled
+        expr: time() - team_memory_worker_last_poll_timestamp_seconds > 600
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "The {{ $labels.kind }} worker {{ $labels.pod }} has not polled for 10 minutes"
+          description: "Its liveness probe should restart it; if this persists, check the pod and the database."
+      - alert: TeamMemoryJobQueueUnobserved
+        expr: team_memory_jobs_scrape_error == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Queue metrics on {{ $labels.pod }} cannot be read"
+          description: "The worker cannot query its job queue (database or permissions)."
+
+  - name: team-memory.mirror
+    rules:
+      - alert: TeamMemoryMirrorSecretDetected
+        expr: increase(team_memory_mirror_secret_detected_total[1h]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "A memory event was not exported because it contains a credential"
+          description: "Repository {{ $labels.repository }}. Rotate the credential and follow docs/operations/secret-purge.md."
+      - alert: TeamMemoryMirrorBehind
+        expr: team_memory_mirror_undelivered{state=~"pending|committed"} > 0 and on (pod) (team_memory_jobs_oldest_pending_age_seconds{kind="git_mirror"} > 1800)
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "The git mirror is more than 30 minutes behind"
+          description: "{{ $value }} events {{ $labels.state }}. Check the git remote and the mirror worker log."
+      - alert: TeamMemoryMirrorHeld
+        expr: team_memory_mirror_undelivered{state=~"failed|held"} > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} mirror events are {{ $labels.state }}"
+          description: "Events are held behind a blocked event. See docs/operations/mirror.md."
+
+  # These need exporters next to PostgreSQL (postgres_exporter, node_exporter
+  # or kubelet volume stats); adjust the selectors to your setup.
+  - name: team-memory.postgres
+    rules:
+      - alert: TeamMemoryDatabaseDiskFilling
+        expr: |
+          (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~".*postgres.*"}
+            / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~".*postgres.*"}) < 0.2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL volume {{ $labels.persistentvolumeclaim }} is over 80% full"
+          description: "Free space {{ $value | humanizePercentage }}. WAL archiving failures also fill the disk; check pg_stat_archiver."
+      - alert: TeamMemoryDatabaseHostDiskFilling
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint=~"/var/lib/postgresql.*"}
+            / node_filesystem_size_bytes{mountpoint=~"/var/lib/postgresql.*"}) < 0.2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "PostgreSQL filesystem on {{ $labels.instance }} is over 80% full"
+          description: "Free space {{ $value | humanizePercentage }}."
+      - alert: TeamMemoryWALArchivingFailing
+        expr: increase(pg_stat_archiver_failed_count[15m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "WAL archiving is failing"
+          description: "The recovery point objective (15 minutes) is at risk. See docs/operations/backup-restore.md."
+      - alert: TeamMemoryWALArchiveStale
+        expr: time() - pg_stat_archiver_last_archive_time > 900
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "No WAL segment archived for 15 minutes"
+          description: "archive_timeout forces a segment at least every 60 s, so a 15-minute gap means archiving is broken."

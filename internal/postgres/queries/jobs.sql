@@ -85,3 +85,18 @@ ORDER BY kind, status;
 
 -- name: GetJob :one
 SELECT * FROM jobs WHERE id = $1;
+
+-- name: OldestReadyJobAge :many
+-- Age of the oldest job that is ready to run, per kind (queue backlog).
+SELECT kind, extract(epoch FROM now() - min(run_after))::float8 AS age_seconds
+FROM jobs
+WHERE status = 'pending' AND run_after <= now()
+GROUP BY kind;
+
+-- name: ListDeadJobs :many
+-- Dead-lettered jobs for inspection (operator).
+SELECT id, kind, attempts, max_attempts, coalesce(last_error, '')::text AS last_error, payload, updated_at
+FROM jobs
+WHERE status = 'dead' AND (@kind::text = '' OR kind = @kind::text)
+ORDER BY updated_at DESC
+LIMIT @max_rows::integer;

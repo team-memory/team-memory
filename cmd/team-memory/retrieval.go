@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
 	"github.com/team-memory/team-memory/internal/search"
+	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
 // embeddingSettings is the retrieval configuration read from the environment.
@@ -75,12 +78,16 @@ func loadEmbeddingSettings() (embeddingSettings, error) {
 }
 
 // provider returns the configured embedding provider, or nil when no Ollama
-// URL is set.
-func (s embeddingSettings) provider() (embeddings.EmbeddingProvider, error) {
+// URL is set. Calls are traced and, with m, measured.
+func (s embeddingSettings) provider(m *telemetry.Metrics, purpose string) (embeddings.EmbeddingProvider, error) {
 	if s.ollamaURL == "" {
 		return nil, nil
 	}
-	return embeddings.NewOllama(s.ollamaURL, s.model, nil)
+	p, err := embeddings.NewOllama(s.ollamaURL, s.model, &http.Client{Timeout: 60 * time.Second, Transport: telemetry.Transport(nil)})
+	if err != nil {
+		return nil, err
+	}
+	return observe(p, m, purpose), nil
 }
 
 func envDuration(key string, def time.Duration) (time.Duration, error) {
@@ -115,12 +122,12 @@ func envInt(key string, def int) (int, error) {
 //	TEAM_MEMORY_QUERY_EMBED_TIMEOUT   query embedding timeout (default 2s)
 //	TEAM_MEMORY_HNSW_ITERATIVE_SCAN   off | relaxed_order | strict_order (default relaxed_order)
 //	TEAM_MEMORY_HNSW_EF_SEARCH        hnsw.ef_search (default 100)
-func newSearch(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) (*search.Service, error) {
+func newSearch(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, m *telemetry.Metrics) (*search.Service, error) {
 	s, err := loadEmbeddingSettings()
 	if err != nil {
 		return nil, err
 	}
-	p, err := s.provider()
+	p, err := s.provider(m, "query")
 	if err != nil {
 		return nil, err
 	}
@@ -162,35 +169,34 @@ func workerCmd(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	p, err := s.provider()
+	metrics, stopTracing, err := startTelemetry(ctx, "worker", logger)
+	if err != nil {
+		return err
+	}
+	defer stopTracing()
+	p, err := s.provider(metrics, "document")
 	if err != nil {
 		return err
 	}
 	if p == nil {
 		return errors.New("TEAM_MEMORY_OLLAMA_URL is not set; the worker needs an embedding provider")
 	}
-	host, _ := os.Hostname()
-	cfg := jobs.Config{Name: env("TEAM_MEMORY_WORKER_NAME", fmt.Sprintf("%s/%d", host, os.Getpid())), Logger: logger}
-	if cfg.BatchSize, err = envInt("TEAM_MEMORY_WORKER_BATCH", 16); err != nil {
+	cfg, err := jobsConfig(logger)
+	if err != nil {
 		return err
 	}
-	for key, dst := range map[string]*time.Duration{
-		"TEAM_MEMORY_WORKER_POLL_INTERVAL": &cfg.PollInterval,
-		"TEAM_MEMORY_WORKER_LEASE":         &cfg.Lease,
-		"TEAM_MEMORY_WORKER_BACKOFF_BASE":  &cfg.BackoffBase,
-		"TEAM_MEMORY_WORKER_BACKOFF_MAX":   &cfg.BackoffMax,
-	} {
-		if *dst, err = envDuration(key, 0); err != nil {
-			return err
-		}
-	}
-	return withRuntimePool(ctx, "TEAM_MEMORY_WORKER_DATABASE_URL", postgres.RoleWorker, nil, func(pool *pgxpool.Pool) error {
+	cfg.Metrics = metrics.Jobs()
+	return withRuntimePool(ctx, "TEAM_MEMORY_WORKER_DATABASE_URL", postgres.RoleWorker, telemetry.PGXTracer{}, func(pool *pgxpool.Pool) error {
+		metrics.RegisterPool(pool, "worker")
+		registerQueue(metrics, pool)
 		ix, err := embeddings.NewIndexer(ctx, pool, p)
 		if err != nil {
 			return err
 		}
 		ix.ConflictThreshold = s.conflictSimilarity
 		ix.Logger = logger
+		w := ix.Worker(cfg)
+		serveOps(ctx, logger, metrics, workerLiveness(w, cfg), func(ctx context.Context) error { return pool.Ping(ctx) })
 		// A wrong dimension count is a configuration error: stop now. An
 		// unreachable provider is not; jobs retry until it returns.
 		pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -210,8 +216,30 @@ func workerCmd(ctx context.Context, args []string) error {
 			logger.Info("backfill", "jobs_enqueued", n)
 		}
 		logger.Info("worker started", "model", s.model.Name, "name", cfg.Name)
-		return ix.Worker(cfg).Run(ctx)
+		return w.Run(ctx)
 	})
+}
+
+// jobsConfig reads the TEAM_MEMORY_WORKER_* settings shared by the
+// embedding and mirror workers.
+func jobsConfig(logger *slog.Logger) (jobs.Config, error) {
+	host, _ := os.Hostname()
+	cfg := jobs.Config{Name: env("TEAM_MEMORY_WORKER_NAME", fmt.Sprintf("%s/%d", host, os.Getpid())), Logger: logger}
+	var err error
+	if cfg.BatchSize, err = envInt("TEAM_MEMORY_WORKER_BATCH", 16); err != nil {
+		return cfg, err
+	}
+	for key, dst := range map[string]*time.Duration{
+		"TEAM_MEMORY_WORKER_POLL_INTERVAL": &cfg.PollInterval,
+		"TEAM_MEMORY_WORKER_LEASE":         &cfg.Lease,
+		"TEAM_MEMORY_WORKER_BACKOFF_BASE":  &cfg.BackoffBase,
+		"TEAM_MEMORY_WORKER_BACKOFF_MAX":   &cfg.BackoffMax,
+	} {
+		if *dst, err = envDuration(key, 0); err != nil {
+			return cfg, err
+		}
+	}
+	return cfg, nil
 }
 
 func embeddingsCmd(ctx context.Context, args []string) error {
@@ -267,7 +295,7 @@ func embeddingsCmd(ctx context.Context, args []string) error {
 
 func jobsCmd(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: team-memory jobs status|retry-dead")
+		return errors.New("usage: team-memory jobs status|dead|retry-dead")
 	}
 	return withPool(ctx, func(pool *pgxpool.Pool) error {
 		q := db.New(pool)
@@ -283,9 +311,25 @@ func jobsCmd(ctx context.Context, args []string) error {
 				fmt.Fprintf(w, "%s\t%s\t%d\n", r.Kind, r.Status, r.Jobs)
 			}
 			return w.Flush()
+		case "dead":
+			fs := flag.NewFlagSet("jobs dead", flag.ExitOnError)
+			kind := fs.String("kind", "", "job kind (embed or git_mirror; default all)")
+			limit := fs.Int("limit", 50, "maximum rows")
+			_ = fs.Parse(args[1:])
+			rows, err := q.ListDeadJobs(ctx, db.ListDeadJobsParams{Kind: *kind, MaxRows: int32(*limit)})
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tKIND\tATTEMPTS\tDEAD SINCE\tPAYLOAD\tLAST ERROR")
+			for _, r := range rows {
+				fmt.Fprintf(w, "%d\t%s\t%d/%d\t%s\t%s\t%s\n", r.ID, r.Kind, r.Attempts, r.MaxAttempts,
+					r.UpdatedAt.Format(time.RFC3339), r.Payload, strings.ReplaceAll(r.LastError, "\n", " "))
+			}
+			return w.Flush()
 		case "retry-dead":
 			fs := flag.NewFlagSet("jobs retry-dead", flag.ExitOnError)
-			kind := fs.String("kind", embeddings.JobKind, "job kind")
+			kind := fs.String("kind", embeddings.JobKind, "job kind: embed or git_mirror")
 			_ = fs.Parse(args[1:])
 			n, err := q.RetryDeadJobs(ctx, *kind)
 			if err != nil {

@@ -1,0 +1,275 @@
+# Team Memory Helm chart values. See README.md and
+# docs/operations/authentication.md. Never put secret values in this file:
+# every credential is a reference to an existing Kubernetes Secret.
+
+image:
+  repository: ghcr.io/team-memory/team-memory
+  # Defaults to the chart's appVersion. Prefer a digest in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# The exact browser origin of the deployment (https in production). It is
+# the OAuth issuer, the MCP resource origin, the portal's cookie and Origin
+# check origin. Required.
+publicURL: ""
+
+# Scope used when an MCP tool call names none (e.g. acme/default).
+defaultScope: ""
+
+database:
+  # Secret holding PostgreSQL connection URLs, one per database role
+  # (docs/decisions/rls.md). Required. Create it before installing.
+  existingSecret: ""
+  keys:
+    # Operator role: migrations and the operator CLI only.
+    operator: operator-url
+    # team_memory_app login (serve).
+    app: app-url
+    # team_memory_worker login (embedding worker).
+    worker: worker-url
+    # team_memory_mirror login (git mirror worker).
+    mirror: mirror-url
+  # pgx pool settings may also be given as URL parameters
+  # (pool_max_conns, pool_min_conns, pool_max_conn_lifetime, ...).
+
+migrations:
+  # Run `team-memory migrate` as a pre-install/pre-upgrade hook with the
+  # operator URL. Disable if a DBA applies migrations separately.
+  enabled: true
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+api:
+  replicas: 2
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 256Mi}
+  # Requests per principal per replica.
+  rateLimit: 20
+  rateBurst: 60
+  # Readiness fails at SIGTERM, then requests drain (delay + timeout must be
+  # shorter than terminationGracePeriodSeconds).
+  shutdownDelay: 5s
+  shutdownTimeout: 20s
+  terminationGracePeriodSeconds: 35
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  # Spread replicas across nodes when possible.
+  topologySpread: true
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  extraEnv: []
+
+# CIDRs of the reverse proxies in front of the API (the ingress controller
+# pods), whose X-Forwarded-For is trusted for rate limits and audit. Use the
+# cluster pod CIDR when the ingress runs in-cluster, e.g. 10.42.0.0/16
+# (k3s) or 10.1.0.0/16 (MicroK8s Calico).
+trustedProxies: []
+
+embeddings:
+  # Ollama base URL. Empty disables hybrid search (full-text only) and the
+  # embedding worker.
+  ollamaURL: ""
+  model: nomic-embed-text
+  dimensions: ""
+  queryEmbedTimeout: 2s
+
+worker:
+  # Runs only when embeddings.ollamaURL is set.
+  enabled: true
+  replicas: 1
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {memory: 256Mi}
+  batch: 16
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  extraEnv: []
+
+portal:
+  enabled: true
+  # Path on the publicURL host ("/" serves the portal at the root). A
+  # separate portal hostname is not supported: the portal's cookies, Origin
+  # check and SSO callback are bound to publicURL.
+  basePath: /portal
+  # auto (solo: token sign-in on; SSO: off), owner (SSO: owner may use a
+  # token until SSO is linked), all, off.
+  tokenSignIn: auto
+  idleTimeout: 30m
+  absoluteTimeout: 12h
+  sourceSchemes: []
+  cspExtra: ""
+  # Requests per portal session per replica (defaults 10/s, burst 40).
+  rateLimit: 10
+  rateBurst: 40
+  # Sessions and CSRF tokens are random values stored in PostgreSQL: there
+  # is no session signing secret. Cookies are HttpOnly, SameSite=Lax, and
+  # Secure with the __Secure- prefix when publicURL is https.
+
+sso:
+  # Team mode: sign-in through upstream OIDC providers. Solo mode leaves
+  # this off and uses personal access tokens.
+  enabled: false
+  # Secret with one PEM private key per key, named <kid>.pem. Required with
+  # SSO. All keys are published; activeSigningKey (or the only key) signs.
+  signingKeys:
+    existingSecret: ""
+    activeSigningKey: ""
+  accessTokenTTL: 15m
+  refreshTokenTTL: 720h
+  clientRegistration:
+    clientIDMetadataDocuments: true
+    dynamic: true
+    cimdAllowedHosts: []
+    allowRemoteRedirectURIs: false
+  # Each provider's client secret comes from existingSecret (key
+  # client-secret). Register <publicURL>/oauth/callback/<id> as its redirect URI.
+  providers: []
+  #  - id: keycloak
+  #    displayName: Company SSO
+  #    issuer: https://sso.example.com/realms/example
+  #    clientID: team-memory
+  #    existingSecret: team-memory-idp-keycloak
+  #    scopes: [openid, email, profile]
+  #    allowedEmailDomains: [example.com]
+  #    allowedGroups: []
+  #    groupsClaim: groups
+  #    autoProvision: true
+  #    syncGroupRoles: false
+
+mirror:
+  # One-way git export (docs/operations/mirror.md). Off by default.
+  enabled: false
+  # URL template; {repo} is the owning scope's id.
+  remote: ""   # ssh://git@git.example.com/team-memory-mirror/{repo}.git
+  branch: main
+  # Secret with ssh-privatekey and known_hosts (ssh), or token and
+  # optionally ca.crt (https).
+  existingSecret: ""
+  # https only: the Secret also has ca.crt for a private CA.
+  customCA: false
+  tokenUser: x-access-token
+  emailDomain: ""
+  replicas: 1
+  cacheSizeLimit: 1Gi
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  verifyCronJob:
+    enabled: false
+    schedule: "17 3 * * *"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  extraEnv: []
+
+tracing:
+  # OTLP/HTTP endpoint of a collector, e.g. http://otel-collector.observability:4318.
+  # Empty: spans are created (trace ids reach logs and audit) but not exported.
+  otlpEndpoint: ""
+  sampler: parentbased_traceidratio
+  samplerArg: "0.1"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  # traefik for MicroK8s/k3s Traefik; any class works.
+  className: traefik
+  annotations: {}
+  # Must be the host of publicURL.
+  host: memory.example.com
+  tls:
+    enabled: true
+    secretName: team-memory-tls
+
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+
+networkPolicy:
+  enabled: true
+  # Who may reach the API (port 8080): the ingress controller's pods.
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+  # Who may scrape metrics (port 9090) on every component.
+  metricsFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+  # Egress peers per dependency. DNS goes to kube-dns.
+  dnsTo:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  database:
+    port: 5432
+    to: []   # e.g. [{ipBlock: {cidr: 10.0.0.5/32}}] or a namespace/pod selector
+  # Upstream IdPs (api only, when sso.enabled). Hosted IdPs have no stable
+  # IPs, so the default allows 443 to anything outside the cluster networks.
+  idp:
+    ports: [443]
+    to:
+      - ipBlock:
+          cidr: 0.0.0.0/0
+          except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+  embeddings:
+    port: 11434
+    to: []
+  mirrorRemote:
+    ports: [22, 443]
+    to: []
+  telemetry:
+    port: 4318
+    to: []
+
+# Extra volumes and mounts for every long-running component, e.g. a
+# private CA bundle (then set SSL_CERT_FILE in the component's extraEnv).
+extraVolumes: []
+extraVolumeMounts: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  privileged: false
+  capabilities:
+    drop: [ALL]
