@@ -21,6 +21,7 @@ type Approval struct {
 	ReviewerID uuid.UUID
 	Note       string
 	DecidedAt  time.Time
+	ScopeID    uuid.UUID
 }
 
 type AuditEvent struct {
@@ -34,6 +35,7 @@ type AuditEvent struct {
 	ScopeID    *uuid.UUID
 	Outcome    string
 	Details    []byte
+	RequestID  *string
 }
 
 type ConflictCandidate struct {
@@ -65,6 +67,16 @@ type IdempotencyKey struct {
 	Response    []byte
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
+}
+
+type IdpGroupMapping struct {
+	OrgID     uuid.UUID
+	Issuer    string
+	GroupName string
+	ScopeID   uuid.UUID
+	Role      string
+	Cascade   bool
+	CreatedAt time.Time
 }
 
 type Job struct {
@@ -153,6 +165,63 @@ type MirrorState struct {
 	UpdatedAt     time.Time
 }
 
+type OauthAuthRequest struct {
+	ID                  uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	ResponseType        string
+	ResponseMode        string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Resource            string
+	CreatedAt           time.Time
+	Subject             *string
+	Idp                 *string
+	AuthTime            *time.Time
+	Done                bool
+}
+
+type OauthClient struct {
+	ID           string
+	Name         string
+	ClientUri    string
+	RedirectUris []string
+	CreatedAt    time.Time
+}
+
+type OauthCode struct {
+	CodeHash  string
+	RequestID uuid.UUID
+	CreatedAt time.Time
+}
+
+type OauthPendingLogin struct {
+	StateHash     string
+	AuthRequestID uuid.UUID
+	Provider      string
+	Nonce         string
+	Verifier      string
+	BrowserHash   string
+	ExpiresAt     time.Time
+}
+
+type OauthRefreshToken struct {
+	TokenHash string
+	Family    uuid.UUID
+	ClientID  string
+	Subject   string
+	Idp       string
+	Scopes    []string
+	Resource  string
+	AuthTime  time.Time
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
 type OrgSetting struct {
 	OrgID            uuid.UUID
 	AllowedLevels    []string
@@ -211,6 +280,7 @@ type RevisionOverride struct {
 	Revision           int32
 	OrgID              uuid.UUID
 	OverriddenMemoryID uuid.UUID
+	ScopeID            uuid.UUID
 }
 
 type Scope struct {
@@ -224,6 +294,14 @@ type Scope struct {
 	Path      string
 	CreatedAt time.Time
 	CreatedBy *uuid.UUID
+}
+
+type ScopeAccess struct {
+	PrincipalID uuid.UUID
+	ScopeID     uuid.UUID
+	OrgID       uuid.UUID
+	Rank        int16
+	CascadeRank int16
 }
 
 type ScopeClosure struct {
@@ -242,4 +320,6 @@ type ScopeMember struct {
 	GrantedBy   *uuid.UUID
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      string
+	IdpIssuer   *string
 }

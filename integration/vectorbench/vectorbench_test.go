@@ -81,7 +81,14 @@ type measurement struct {
 	P50ms     float64 `json:"p50_ms"`
 	P95ms     float64 `json:"p95_ms"`
 	Plan      string  `json:"plan"`
+	// RLS is true when queries ran as the app role under row-level security
+	// (TEAM_MEMORY_BENCH_RLS=1), as serve runs them since stage 04.
+	RLS bool `json:"rls,omitempty"`
 }
+
+// benchPrincipal, when set, is the request identity queries run as on the
+// app-role pool (RLS mode).
+var benchPrincipal string
 
 func TestVectorIndexStrategies(t *testing.T) {
 	spec := os.Getenv("TEAM_MEMORY_VECTOR_BENCH")
@@ -109,7 +116,8 @@ func TestVectorIndexStrategies(t *testing.T) {
 
 func runSize(t *testing.T, n int) []measurement {
 	ctx := context.Background()
-	pool := testdb.New(t)
+	d := testdb.NewDB(t)
+	pool := d.Admin
 	rng := rand.New(rand.NewPCG(uint64(n), 42))
 	centroids := make([][]float32, topics)
 	for i := range centroids {
@@ -141,6 +149,26 @@ func runSize(t *testing.T, n int) []measurement {
 	_ = pool.QueryRow(ctx, "SELECT pg_size_pretty(pg_relation_size($1))", model.IndexName()).Scan(&idxSize)
 	t.Logf("n=%d: HNSW build %s, index size %s", n, time.Since(start).Round(time.Millisecond), idxSize)
 
+	// RLS mode: a principal with a cascading reader grant on every
+	// organization sees every row, so recall compares like with like, and
+	// queries pay the policy predicates on the app role.
+	qpool, rls := pool, os.Getenv("TEAM_MEMORY_BENCH_RLS") == "1"
+	benchPrincipal = ""
+	if rls {
+		var p uuid.UUID
+		if err := pool.QueryRow(ctx, "INSERT INTO principals (kind, display_name) VALUES ('service', 'bench') RETURNING id").Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO scope_members (org_id, scope_id, principal_id, role, cascade)
+			SELECT id, id, $1, 'reader', true FROM scopes WHERE parent_id IS NULL`, p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "ANALYZE scope_access"); err != nil {
+			t.Fatal(err)
+		}
+		qpool, benchPrincipal = d.App, p.String()
+	}
+
 	qs := make([][]float32, queries)
 	for i := range qs {
 		qs[i] = randomUnit(rng, centroids[rng.IntN(topics)], 0.6)
@@ -150,16 +178,16 @@ func runSize(t *testing.T, n int) []measurement {
 		frac := float64(sc.Rows) / float64(n)
 		truth := make([][]uuid.UUID, len(qs))
 		for i, q := range qs {
-			truth[i], _ = runQuery(t, ctx, pool, strategies[0], sc.ScopeIDs, q)
+			truth[i], _ = runQuery(t, ctx, qpool, strategies[0], sc.ScopeIDs, q)
 		}
 		for _, st := range strategies {
-			m := measurement{Size: n, Scenario: sc.Name, Fraction: frac, Strategy: st.Name, MinRows: k}
-			_, _ = runQuery(t, ctx, pool, st, sc.ScopeIDs, qs[0]) // warm up
+			m := measurement{Size: n, Scenario: sc.Name, Fraction: frac, Strategy: st.Name, MinRows: k, RLS: rls}
+			_, _ = runQuery(t, ctx, qpool, st, sc.ScopeIDs, qs[0]) // warm up
 			var lat []float64
 			var recall, recall10 float64
 			for i, q := range qs {
-				got, d := runQuery(t, ctx, pool, st, sc.ScopeIDs, q)
-				lat = append(lat, float64(d.Microseconds())/1000)
+				got, dur := runQuery(t, ctx, qpool, st, sc.ScopeIDs, q)
+				lat = append(lat, float64(dur.Microseconds())/1000)
 				recall += overlap(got, truth[i], k)
 				recall10 += overlap(got, truth[i], 10)
 				m.MinRows = min(m.MinRows, len(got))
@@ -167,7 +195,7 @@ func runSize(t *testing.T, n int) []measurement {
 			m.RecallAtK, m.Recall10 = recall/float64(len(qs)), recall10/float64(len(qs))
 			slices.Sort(lat)
 			m.P50ms, m.P95ms = lat[len(lat)/2], lat[len(lat)*95/100]
-			m.Plan = plan(t, ctx, pool, st, sc.ScopeIDs, qs[0])
+			m.Plan = plan(t, ctx, qpool, st, sc.ScopeIDs, qs[0])
 			t.Logf("n=%-7d %-28s %6.2f%% %-42s recall@50 %.3f recall@10 %.3f minrows %2d p50 %6.2fms p95 %6.2fms  %s",
 				n, sc.Name, frac*100, st.Name, m.RecallAtK, m.Recall10, m.MinRows, m.P50ms, m.P95ms, m.Plan)
 			out = append(out, m)
@@ -214,7 +242,7 @@ func withSettings(ctx context.Context, pool *pgxpool.Pool, st strategy, fn func(
 	defer func() { _ = tx.Rollback(ctx) }()
 	// As in internal/search: plan each query for its own scope list. Without
 	// this, pgx's cached statements let strategies share one generic plan.
-	if _, err := tx.Exec(ctx, "SELECT set_config('plan_cache_mode', 'force_custom_plan', true)"); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('plan_cache_mode', 'force_custom_plan', true), set_config('app.principal_id', $1, true)", benchPrincipal); err != nil {
 		return err
 	}
 	for k, v := range st.Settings {

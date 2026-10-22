@@ -334,11 +334,11 @@ func TestOAuthLoginEndToEnd(t *testing.T) {
 		t.Fatalf("challenge: %d %q", resp.StatusCode, ch)
 	}
 
-	alice := newPrincipal(t, env.tr.pool, "Alice")
-	if err := env.tr.svc.AddMember(ctx, uuid.Nil, "acme/platform/payments", alice.ID, memory.RoleWriter, false); err != nil {
+	alice := newPrincipal(t, env.tr.db.Admin, "Alice")
+	if err := env.tr.admin.AddMember(ctx, uuid.Nil, "acme/platform/payments", alice.ID, memory.RoleWriter, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := auth.NewIdentities(env.tr.pool).Link(ctx, alice.ID, auth.ExternalIdentity{Issuer: env.idp.srv.URL, Subject: "alice-sub"}); err != nil {
+	if err := auth.NewIdentities(env.tr.db.Admin).Link(ctx, alice.ID, auth.ExternalIdentity{Issuer: env.idp.srv.URL, Subject: "alice-sub"}); err != nil {
 		t.Fatal(err)
 	}
 	env.idp.loginAs(map[string]any{"sub": "alice-sub", "email": "alice@example.com", "email_verified": true, "name": "Alice A."})
@@ -356,12 +356,12 @@ func TestOAuthLoginEndToEnd(t *testing.T) {
 		t.Fatalf("memory_create: %v", out)
 	}
 	var creator string
-	if err := env.tr.pool.QueryRow(ctx, "SELECT created_by::text FROM memories WHERE id = $1", out["id"]).Scan(&creator); err != nil || creator != alice.ID.String() {
+	if err := env.tr.db.Admin.QueryRow(ctx, "SELECT created_by::text FROM memories WHERE id = $1", out["id"]).Scan(&creator); err != nil || creator != alice.ID.String() {
 		t.Fatalf("memory created by %s (%v), want linked principal %s", creator, err, alice.ID)
 	}
 	// Linking did not create a second principal for the same person.
 	var n int
-	_ = env.tr.pool.QueryRow(ctx, "SELECT count(*) FROM principals WHERE display_name LIKE 'Alice%'").Scan(&n)
+	_ = env.tr.db.Admin.QueryRow(ctx, "SELECT count(*) FROM principals WHERE display_name LIKE 'Alice%'").Scan(&n)
 	if n != 1 {
 		t.Fatalf("%d Alice principals", n)
 	}
@@ -383,7 +383,7 @@ func TestOAuthProvisionedUserHasNoRoles(t *testing.T) {
 		t.Fatalf("provisioned user without roles searched: %v", out)
 	}
 	var owner string
-	_ = env.tr.pool.QueryRow(context.Background(), "SELECT p.display_name FROM org_settings s JOIN principals p ON p.id = s.owner_principal_id").Scan(&owner)
+	_ = env.tr.db.Admin.QueryRow(context.Background(), "SELECT p.display_name FROM org_settings s JOIN principals p ON p.id = s.owner_principal_id").Scan(&owner)
 	if owner != "Owner" {
 		t.Fatalf("owner changed to %q", owner)
 	}
@@ -396,8 +396,8 @@ func TestOAuthEmailNeverLinks(t *testing.T) {
 	env := newSSOEnv(t, nil)
 	env.waitReady(t)
 	ctx := context.Background()
-	ids := auth.NewIdentities(env.tr.pool)
-	carol := newPrincipal(t, env.tr.pool, "carol@example.com")
+	ids := auth.NewIdentities(env.tr.db.Admin)
+	carol := newPrincipal(t, env.tr.db.Admin, "carol@example.com")
 	if err := ids.Link(ctx, carol.ID, auth.ExternalIdentity{Issuer: "https://other-idp.example.com", Subject: "carol", Email: "carol@example.com"}); err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestOAuthPolicyRejections(t *testing.T) {
 		}
 	}
 	var n int
-	_ = env.tr.pool.QueryRow(context.Background(), "SELECT count(*) FROM principal_identities").Scan(&n)
+	_ = env.tr.db.Admin.QueryRow(context.Background(), "SELECT count(*) FROM principal_identities").Scan(&n)
 	if n != 0 {
 		t.Fatalf("%d identities created by refused logins", n)
 	}
@@ -542,7 +542,7 @@ func TestOAuthRejectsUpstreamAndForeignTokens(t *testing.T) {
 func TestSSOModeAcceptsPATs(t *testing.T) {
 	env := newSSOEnv(t, nil)
 	env.waitReady(t)
-	tok, err := auth.NewPATs(env.tr.pool).Issue(context.Background(), env.tr.owner.ID, "ci", time.Hour)
+	tok, err := auth.NewPATs(env.tr.db.Admin).Issue(context.Background(), env.tr.owner.ID, "ci", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

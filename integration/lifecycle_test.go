@@ -75,8 +75,14 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("history events: %+v", h.Events)
 	}
 
-	// Supersede creates a linked replacement in the same scope.
-	old, repl, err := tr.svc.Supersede(ctx, writer, memory.SupersedeInput{ID: m.ID, ExpectedRevision: 2, Reason: "upgraded to 17",
+	// Supersede needs maintainer and creates a linked replacement in the
+	// same scope.
+	sup := memory.SupersedeInput{ID: m.ID, ExpectedRevision: 2, Reason: "upgraded to 17",
+		Replacement: memory.CreateInput{Title: "Use PostgreSQL 17 for payments-api", Content: "Upgraded to PostgreSQL 17."}}
+	if _, _, err := tr.svc.Supersede(ctx, writer, sup); !errors.Is(err, memory.ErrForbidden) {
+		t.Fatalf("writer supersede: want forbidden, got %v", err)
+	}
+	old, repl, err := tr.svc.Supersede(ctx, tr.owner, memory.SupersedeInput{ID: m.ID, ExpectedRevision: 2, Reason: "upgraded to 17",
 		Replacement: memory.CreateInput{Title: "Use PostgreSQL 17 for payments-api", Content: "Upgraded to PostgreSQL 17."}})
 	if err != nil {
 		t.Fatal(err)
@@ -118,9 +124,9 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("archived memory still in recent: %+v", rec)
 	}
 
-	// Review requests are a stage 04 contract.
-	if err := tr.svc.RequestReview(ctx, tr.owner, m.ID, 2); !errors.Is(err, memory.ErrNotImplemented) {
-		t.Fatalf("RequestReview: %v", err)
+	// Archived memories take no review requests.
+	if _, err := tr.svc.RequestReview(ctx, tr.owner, m.ID, 2); !errors.Is(err, memory.ErrNotActive) {
+		t.Fatalf("RequestReview on archived memory: %v", err)
 	}
 }
 
@@ -148,7 +154,8 @@ func TestValidation(t *testing.T) {
 }
 
 // Revision rows (and events, closure rows, audit rows) are append-only even
-// for the table owner.
+// for the table owner (here a superuser); the app role cannot even attempt
+// these statements (integration/security covers it).
 func TestRevisionsImmutable(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
@@ -174,7 +181,7 @@ func TestRevisionsImmutable(t *testing.T) {
 		if strings.Contains(sql, "$1") {
 			args = append(args, m.ID)
 		}
-		if _, err := tr.pool.Exec(ctx, sql, args...); err == nil || !strings.Contains(err.Error(), "append-only") {
+		if _, err := tr.db.Admin.Exec(ctx, sql, args...); err == nil || !strings.Contains(err.Error(), "append-only") {
 			t.Errorf("%s: want append-only rejection, got %v", name, err)
 		}
 	}

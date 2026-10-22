@@ -55,7 +55,7 @@ INSERT INTO scope_members (org_id, scope_id, principal_id, role, cascade, grante
 SELECT s.org_id, s.id, @principal_id, @role, @cascade, @granted_by FROM scopes s WHERE s.id = @scope_id
 ON CONFLICT (scope_id, principal_id)
 DO UPDATE SET role = EXCLUDED.role, cascade = EXCLUDED.cascade,
-              granted_by = EXCLUDED.granted_by, updated_at = now()
+              granted_by = EXCLUDED.granted_by, source = 'manual', idp_issuer = NULL, updated_at = now()
 RETURNING *;
 
 -- name: ListScopeMembers :many
@@ -64,37 +64,64 @@ FROM scope_members m JOIN principals p ON p.id = m.principal_id
 WHERE m.scope_id = $1
 ORDER BY p.display_name;
 
--- name: RolesOnScope :many
--- Roles that apply to a scope: a direct membership, or a cascading grant on an ancestor.
-SELECT m.role
-FROM scope_members m
-JOIN scope_closure c ON c.ancestor_id = m.scope_id
-WHERE c.descendant_id = @scope_id
-  AND m.principal_id = @principal_id
-  AND (c.distance = 0 OR m.cascade);
+-- name: AccessOnScope :one
+-- The principal's precomputed access to a scope (scope_access): rank 1..3 is
+-- the effective role (direct membership or a cascading ancestor grant),
+-- rank 0 means readable only as inherited. No row means no access.
+SELECT rank, cascade_rank FROM scope_access
+WHERE principal_id = @principal_id AND scope_id = @scope_id;
 
 -- name: ReadableScopes :many
 -- Scopes whose own memories the principal may read (direct membership or a
 -- cascading ancestor grant). Ancestors of these are readable as inherited.
-SELECT DISTINCT s.*
-FROM scope_members m
-JOIN scope_closure c ON c.ancestor_id = m.scope_id
-JOIN scopes s ON s.id = c.descendant_id
-WHERE m.principal_id = $1 AND (c.distance = 0 OR m.cascade)
+SELECT s.*, a.rank
+FROM scope_access a
+JOIN scopes s ON s.id = a.scope_id
+WHERE a.principal_id = $1 AND a.rank >= 1
 ORDER BY s.path;
 
 -- name: CanReadMemoriesOf :one
 -- True when the principal can read the target scope directly or any descendant
 -- of it (from which the target's memories are inherited).
 SELECT EXISTS (
-    SELECT 1
-    FROM scope_members m
-    JOIN scope_closure granted ON granted.ancestor_id = m.scope_id
-    JOIN scope_closure inherit ON inherit.descendant_id = granted.descendant_id
-    WHERE m.principal_id = @principal_id
-      AND (granted.distance = 0 OR m.cascade)
-      AND inherit.ancestor_id = @target_scope_id
+    SELECT 1 FROM scope_access
+    WHERE principal_id = @principal_id AND scope_id = @target_scope_id
 )::boolean;
+
+-- name: InsertChildScope :exec
+-- Principal path: no RETURNING, because the new scope becomes readable only
+-- when the access trigger runs at the end of the statement.
+INSERT INTO scopes (id, org_id, parent_id, level, slug, name, depth, path, created_by)
+SELECT @id, p.org_id, p.id, @level, @slug, @name, p.depth + 1, p.path || '/' || @slug::text, @created_by
+FROM scopes p WHERE p.id = @parent_id;
+
+-- name: GetScopeMember :one
+SELECT * FROM scope_members WHERE scope_id = @scope_id AND principal_id = @principal_id;
+
+-- name: DeleteScopeMember :execrows
+DELETE FROM scope_members WHERE scope_id = @scope_id AND principal_id = @principal_id;
+
+-- name: ListMembershipsOfPrincipal :many
+SELECT m.*, s.path AS scope_path
+FROM scope_members m JOIN scopes s ON s.id = m.scope_id
+WHERE m.principal_id = $1
+ORDER BY s.path;
+
+-- name: InsertIdPGroupMapping :exec
+INSERT INTO idp_group_mappings (org_id, issuer, group_name, scope_id, role, cascade)
+SELECT s.org_id, @issuer, @group_name, s.id, @role, @cascade FROM scopes s WHERE s.id = @scope_id
+ON CONFLICT (issuer, group_name, scope_id) DO UPDATE SET role = EXCLUDED.role, cascade = EXCLUDED.cascade;
+
+-- name: DeleteIdPGroupMapping :execrows
+DELETE FROM idp_group_mappings WHERE issuer = @issuer AND group_name = @group_name AND scope_id = @scope_id;
+
+-- name: ListIdPGroupMappings :many
+SELECT g.*, s.path AS scope_path
+FROM idp_group_mappings g JOIN scopes s ON s.id = g.scope_id
+ORDER BY g.issuer, g.group_name, s.path;
+
+-- name: SyncIdPGrants :exec
+SELECT tm_sync_idp_grants(@principal_id::uuid, @issuer::text, @groups::text[]);
 
 -- name: CountOrganizations :one
 SELECT count(*)::integer FROM org_settings;

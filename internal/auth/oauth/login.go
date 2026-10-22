@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
 	"github.com/team-memory/team-memory/internal/auth"
@@ -21,8 +21,9 @@ const (
 	loginTTL    = 10 * time.Minute
 )
 
-// pendingLogin is an upstream login in flight, keyed by its state value and
-// bound to the browser that started it by loginCookie.
+// pendingLogin is an upstream login in flight, keyed by the hash of its
+// state value and bound to the browser that started it by loginCookie
+// (browser holds the cookie value's hash).
 type pendingLogin struct {
 	authRequestID string
 	provider      string
@@ -30,38 +31,6 @@ type pendingLogin struct {
 	verifier      string
 	browser       string
 	expires       time.Time
-}
-
-type logins struct {
-	mu sync.Mutex
-	m  map[string]*pendingLogin
-}
-
-func (l *logins) put(state string, p *pendingLogin, now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for k, v := range l.m {
-		if now.After(v.expires) {
-			delete(l.m, k)
-		}
-	}
-	if len(l.m) >= maxPending {
-		return false
-	}
-	l.m[state] = p
-	return true
-}
-
-// take removes and returns the login for state: each state is single use.
-func (l *logins) take(state string, now time.Time) (*pendingLogin, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	p, ok := l.m[state]
-	delete(l.m, state)
-	if !ok || now.After(p.expires) {
-		return nil, false
-	}
-	return p, true
 }
 
 var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
@@ -117,7 +86,7 @@ func (s *Server) securityHeaders(w http.ResponseWriter) {
 func (s *Server) consent(w http.ResponseWriter, r *http.Request) {
 	s.securityHeaders(w)
 	id := r.URL.Query().Get("authRequestID")
-	a, err := s.store.request(id)
+	a, err := s.store.request(r.Context(), id)
 	if err != nil || a.done {
 		http.Error(w, "This sign-in request has expired. Start again from your application.", http.StatusBadRequest)
 		return
@@ -166,7 +135,7 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "The sign-in form expired or was not submitted from this browser. Start again.", http.StatusForbidden)
 		return
 	}
-	a, err := s.store.request(r.PostForm.Get("authRequestID"))
+	a, err := s.store.request(r.Context(), r.PostForm.Get("authRequestID"))
 	if err != nil || a.done {
 		http.Error(w, "This sign-in request has expired. Start again from your application.", http.StatusBadRequest)
 		return
@@ -181,16 +150,19 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce, verifier, browser := randomString(24), randomString(24), randomString(32), randomString(24)
-	target, err := up.authCodeURL(state, nonce, verifier)
+	target, err := up.authCodeURL(state, nonce, verifier, false)
 	if err != nil {
 		s.logger.Error("upstream login unavailable", "provider", up.cfg.ID, "err", err)
 		http.Error(w, "The identity provider is unavailable.", http.StatusServiceUnavailable)
 		return
 	}
-	if !s.logins.put(state, &pendingLogin{
+	if err := s.store.state.putLogin(r.Context(), hashToken(state), &pendingLogin{
 		authRequestID: a.id, provider: up.cfg.ID, nonce: nonce, verifier: verifier,
-		browser: browser, expires: s.now().Add(loginTTL),
-	}, s.now()) {
+		browser: hashToken(browser), expires: s.now().Add(loginTTL),
+	}); err != nil {
+		if !errors.Is(err, errCapacity) {
+			s.logger.Error("store pending login", "err", err)
+		}
 		http.Error(w, "too many sign-ins in progress", http.StatusServiceUnavailable)
 		return
 	}
@@ -204,14 +176,14 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	s.securityHeaders(w)
 	q := r.URL.Query()
-	pl, ok := s.logins.take(q.Get("state"), s.now())
+	pl, perr := s.store.state.takeLogin(r.Context(), hashToken(q.Get("state")))
 	ck, cerr := r.Cookie(loginCookie)
-	if !ok || pl.provider != r.PathValue("provider") || cerr != nil ||
-		subtle.ConstantTimeCompare([]byte(ck.Value), []byte(pl.browser)) != 1 {
+	if perr != nil || pl.provider != r.PathValue("provider") || cerr != nil ||
+		subtle.ConstantTimeCompare([]byte(hashToken(ck.Value)), []byte(pl.browser)) != 1 {
 		http.Error(w, "This sign-in is unknown, expired, or was started in another browser. Start again from your application.", http.StatusBadRequest)
 		return
 	}
-	a, err := s.store.request(pl.authRequestID)
+	a, err := s.store.request(r.Context(), pl.authRequestID)
 	if err != nil || a.done {
 		http.Error(w, "This sign-in request has expired. Start again from your application.", http.StatusBadRequest)
 		return
@@ -225,6 +197,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	id, err := up.exchange(r.Context(), q.Get("code"), pl.verifier, pl.nonce)
 	if err != nil {
 		s.logger.Warn("upstream login failed", "provider", pl.provider, "err", err)
+		s.auditSignIn(r, uuid.Nil, up.cfg.Issuer, signInReason(err))
 		if errors.Is(err, errPolicy) {
 			s.finishWithError(w, r, a, "access_denied", "your account is not allowed to use this Team Memory deployment")
 			return
@@ -235,6 +208,7 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	p, created, err := s.identities.Resolve(r.Context(), id, up.cfg.autoProvision())
 	if err != nil {
 		s.logger.Warn("principal mapping failed", "provider", pl.provider, "err", err)
+		s.auditSignIn(r, uuid.Nil, id.Issuer, signInReason(err))
 		if errors.Is(err, auth.ErrUnknownIdentity) || errors.Is(err, auth.ErrPrincipalDisabled) {
 			s.finishWithError(w, r, a, "access_denied", "your account is not enabled for this Team Memory deployment")
 			return
@@ -245,11 +219,40 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	if created {
 		s.logger.Info("principal provisioned", "principal", p.ID, "provider", pl.provider)
 	}
-	if err := s.store.complete(a.id, p.ID.String(), id.Issuer, s.now()); err != nil {
+	if up.cfg.SyncGroupRoles {
+		if err := s.identities.SyncGroupRoles(r.Context(), p.ID, id); err != nil {
+			// Fail closed: a sign-in whose grants cannot be brought up to
+			// date (possibly revoked at the IdP) does not proceed.
+			s.logger.Error("group role sync failed", "provider", pl.provider, "err", err)
+			s.finishWithError(w, r, a, "server_error", "sign-in failed")
+			return
+		}
+	}
+	s.auditSignIn(r, p.ID, id.Issuer, "ok")
+	if err := s.store.complete(r.Context(), a.id, p.ID.String(), id.Issuer, s.now()); err != nil {
 		http.Error(w, "This sign-in request has expired. Start again from your application.", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, op.AuthCallbackURL(s.provider)(r.Context(), a.id), http.StatusFound)
+}
+
+func (s *Server) auditSignIn(r *http.Request, principal uuid.UUID, issuer, reason string) {
+	if s.audit != nil {
+		s.audit.RecordSignIn(r.Context(), principal, issuer, reason)
+	}
+}
+
+// signInReason maps a sign-in failure to a fixed audit code.
+func signInReason(err error) string {
+	switch {
+	case errors.Is(err, errPolicy):
+		return "policy"
+	case errors.Is(err, auth.ErrUnknownIdentity):
+		return "unknown_identity"
+	case errors.Is(err, auth.ErrPrincipalDisabled):
+		return "principal_disabled"
+	}
+	return "upstream_error"
 }
 
 // finishWithError redirects an error to the client. The redirect URI was

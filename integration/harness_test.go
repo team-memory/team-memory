@@ -22,9 +22,15 @@ func newDB(t *testing.T) *pgxpool.Pool { return testdb.New(t) }
 
 // tree is the standard fixture: acme (org) -> platform (team) -> payments,
 // with a sibling project billing under the same team.
+//
+// Code under test runs as the database roles production uses: svc and
+// search on the app role (RLS applies), the indexer on the worker role.
+// admin runs operator setup on the superuser pool.
 type tree struct {
-	pool     *pgxpool.Pool
+	db       *testdb.DB
+	pool     *pgxpool.Pool // app role
 	svc      *memory.Service
+	admin    *memory.Service
 	search   *search.Service
 	embedder *embeddings.Fake
 	owner    memory.Principal
@@ -37,34 +43,40 @@ type tree struct {
 func newTree(t *testing.T) *tree {
 	t.Helper()
 	ctx := context.Background()
-	pool := newDB(t)
-	svc := memory.NewService(pool)
-	owner := newPrincipal(t, pool, "Owner")
-	org, err := svc.CreateOrganization(ctx, owner.ID, "acme", "Acme")
+	d := testdb.NewDB(t)
+	admin := memory.NewService(d.Admin)
+	owner := newPrincipal(t, d.Admin, "Owner")
+	org, err := admin.CreateOrganization(ctx, owner.ID, "acme", "Acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	team, err := svc.CreateScope(ctx, uuid.Nil, "acme", "team", "platform", "Platform")
+	team, err := admin.CreateScope(ctx, uuid.Nil, "acme", "team", "platform", "Platform")
 	if err != nil {
 		t.Fatal(err)
 	}
-	payments, err := svc.CreateScope(ctx, uuid.Nil, "acme/platform", "project", "payments", "")
+	payments, err := admin.CreateScope(ctx, uuid.Nil, "acme/platform", "project", "payments", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	billing, err := svc.CreateScope(ctx, uuid.Nil, "acme/platform", "project", "billing", "")
+	billing, err := admin.CreateScope(ctx, uuid.Nil, "acme/platform", "project", "billing", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AddMember(ctx, uuid.Nil, "acme", owner.ID, memory.RoleMaintainer, true); err != nil {
+	if err := admin.AddMember(ctx, uuid.Nil, "acme", owner.ID, memory.RoleMaintainer, true); err != nil {
 		t.Fatal(err)
 	}
 	// The fake embedder stands in for the default model so the migration's
 	// registry row and HNSW index are exercised as in production.
 	fake := embeddings.NewFake("nomic-embed-text", 768)
-	srch := search.New(pool, search.Config{Provider: fake, MinVectorSimilarity: fakeMinSimilarity})
-	return &tree{pool: pool, svc: svc, search: srch, embedder: fake, owner: owner,
+	srch := search.New(d.App, search.Config{Provider: fake, MinVectorSimilarity: fakeMinSimilarity})
+	return &tree{db: d, pool: d.App, svc: memory.NewService(d.App), admin: admin, search: srch, embedder: fake, owner: owner,
 		org: org, team: team, payments: payments, billing: billing}
+}
+
+// portal returns p as it would act in a browser review session.
+func portal(p memory.Principal) memory.Principal {
+	p.AuthMethod = memory.AuthPortal
+	return p
 }
 
 // fakeMinSimilarity separates texts sharing words from unrelated texts for
@@ -74,7 +86,7 @@ const fakeMinSimilarity = 0.15
 // indexer returns an embedding job handler for the tree's fake model.
 func (tr *tree) indexer(t *testing.T) *embeddings.Indexer {
 	t.Helper()
-	ix, err := embeddings.NewIndexer(context.Background(), tr.pool, tr.embedder)
+	ix, err := embeddings.NewIndexer(context.Background(), tr.db.Worker, tr.embedder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,14 +124,14 @@ func newPrincipal(t *testing.T, pool *pgxpool.Pool, name string) memory.Principa
 	if err != nil {
 		t.Fatal(err)
 	}
-	return memory.Principal{ID: p.ID, Kind: p.Kind, DisplayName: p.DisplayName, AuthMethod: "test"}
+	return memory.Principal{ID: p.ID, Kind: p.Kind, DisplayName: p.DisplayName, AuthMethod: memory.AuthPAT}
 }
 
 // member creates a principal with one grant.
 func (tr *tree) member(t *testing.T, name, scope string, role memory.Role, cascade bool) memory.Principal {
 	t.Helper()
-	p := newPrincipal(t, tr.pool, name)
-	if err := tr.svc.AddMember(context.Background(), uuid.Nil, scope, p.ID, role, cascade); err != nil {
+	p := newPrincipal(t, tr.db.Admin, name)
+	if err := tr.admin.AddMember(context.Background(), uuid.Nil, scope, p.ID, role, cascade); err != nil {
 		t.Fatal(err)
 	}
 	return p

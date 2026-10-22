@@ -28,10 +28,15 @@ SELECT m.id, m.org_id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.tru
        m.current_revision, m.state_version, m.superseded_by,
        m.promoted_from_memory_id, m.promoted_from_revision,
        m.created_by, m.created_at, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at
+       r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at,
+       ap.decision AS review_decision, ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+LEFT JOIN approvals ap ON ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.id = $1
 `
 
@@ -57,8 +62,12 @@ type GetMemoryViewRow struct {
 	SourceUri            *string
 	ChangedBy            uuid.UUID
 	RevisedAt            time.Time
+	ReviewDecision       *string
+	ReviewerID           *uuid.UUID
+	ReviewedAt           *time.Time
 }
 
+// Latest review outcome of the current revision.
 func (q *Queries) GetMemoryView(ctx context.Context, id uuid.UUID) (GetMemoryViewRow, error) {
 	row := q.db.QueryRow(ctx, getMemoryView, id)
 	var i GetMemoryViewRow
@@ -84,6 +93,9 @@ func (q *Queries) GetMemoryView(ctx context.Context, id uuid.UUID) (GetMemoryVie
 		&i.SourceUri,
 		&i.ChangedBy,
 		&i.RevisedAt,
+		&i.ReviewDecision,
+		&i.ReviewerID,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
@@ -221,14 +233,15 @@ func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) 
 }
 
 const insertRevisionOverride = `-- name: InsertRevisionOverride :exec
-INSERT INTO revision_overrides (memory_id, revision, org_id, overridden_memory_id)
-VALUES ($1, $2, $3, $4)
+INSERT INTO revision_overrides (memory_id, revision, org_id, scope_id, overridden_memory_id)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertRevisionOverrideParams struct {
 	MemoryID           uuid.UUID
 	Revision           int32
 	OrgID              uuid.UUID
+	ScopeID            uuid.UUID
 	OverriddenMemoryID uuid.UUID
 }
 
@@ -237,6 +250,7 @@ func (q *Queries) InsertRevisionOverride(ctx context.Context, arg InsertRevision
 		arg.MemoryID,
 		arg.Revision,
 		arg.OrgID,
+		arg.ScopeID,
 		arg.OverriddenMemoryID,
 	)
 	return err
@@ -404,10 +418,15 @@ func (q *Queries) LockMemory(ctx context.Context, id uuid.UUID) (Memory, error) 
 const recentMemories = `-- name: RecentMemories :many
 SELECT m.id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.trust,
        m.current_revision, m.created_by, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri
+       r.title, r.content, r.rationale, r.source_uri,
+       ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+LEFT JOIN approvals ap ON m.trust = 'approved' AND ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.scope_id = ANY($1::uuid[])
   AND m.status = 'active'
   AND (cardinality($2::text[]) = 0 OR m.kind = ANY($2::text[]))
@@ -435,6 +454,8 @@ type RecentMemoriesRow struct {
 	Content         string
 	Rationale       string
 	SourceUri       *string
+	ReviewerID      *uuid.UUID
+	ReviewedAt      *time.Time
 }
 
 func (q *Queries) RecentMemories(ctx context.Context, arg RecentMemoriesParams) ([]RecentMemoriesRow, error) {
@@ -460,6 +481,8 @@ func (q *Queries) RecentMemories(ctx context.Context, arg RecentMemoriesParams) 
 			&i.Content,
 			&i.Rationale,
 			&i.SourceUri,
+			&i.ReviewerID,
+			&i.ReviewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -557,6 +580,40 @@ type SetMemorySupersededParams struct {
 
 func (q *Queries) SetMemorySuperseded(ctx context.Context, arg SetMemorySupersededParams) (Memory, error) {
 	row := q.db.QueryRow(ctx, setMemorySuperseded, arg.SupersededBy, arg.ID)
+	var i Memory
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ScopeID,
+		&i.Kind,
+		&i.Status,
+		&i.Trust,
+		&i.CurrentRevision,
+		&i.StateVersion,
+		&i.SupersededBy,
+		&i.PromotedFromMemoryID,
+		&i.PromotedFromRevision,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setMemoryTrust = `-- name: SetMemoryTrust :one
+UPDATE memories
+SET trust = $1, state_version = state_version + 1, updated_at = now()
+WHERE id = $2
+RETURNING id, org_id, scope_id, kind, status, trust, current_revision, state_version, superseded_by, promoted_from_memory_id, promoted_from_revision, created_by, created_at, updated_at
+`
+
+type SetMemoryTrustParams struct {
+	Trust string
+	ID    uuid.UUID
+}
+
+func (q *Queries) SetMemoryTrust(ctx context.Context, arg SetMemoryTrustParams) (Memory, error) {
+	row := q.db.QueryRow(ctx, setMemoryTrust, arg.Trust, arg.ID)
 	var i Memory
 	err := row.Scan(
 		&i.ID,

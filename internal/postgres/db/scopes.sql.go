@@ -12,15 +12,35 @@ import (
 	"github.com/google/uuid"
 )
 
+const accessOnScope = `-- name: AccessOnScope :one
+SELECT rank, cascade_rank FROM scope_access
+WHERE principal_id = $1 AND scope_id = $2
+`
+
+type AccessOnScopeParams struct {
+	PrincipalID uuid.UUID
+	ScopeID     uuid.UUID
+}
+
+type AccessOnScopeRow struct {
+	Rank        int16
+	CascadeRank int16
+}
+
+// The principal's precomputed access to a scope (scope_access): rank 1..3 is
+// the effective role (direct membership or a cascading ancestor grant),
+// rank 0 means readable only as inherited. No row means no access.
+func (q *Queries) AccessOnScope(ctx context.Context, arg AccessOnScopeParams) (AccessOnScopeRow, error) {
+	row := q.db.QueryRow(ctx, accessOnScope, arg.PrincipalID, arg.ScopeID)
+	var i AccessOnScopeRow
+	err := row.Scan(&i.Rank, &i.CascadeRank)
+	return i, err
+}
+
 const canReadMemoriesOf = `-- name: CanReadMemoriesOf :one
 SELECT EXISTS (
-    SELECT 1
-    FROM scope_members m
-    JOIN scope_closure granted ON granted.ancestor_id = m.scope_id
-    JOIN scope_closure inherit ON inherit.descendant_id = granted.descendant_id
-    WHERE m.principal_id = $1
-      AND (granted.distance = 0 OR m.cascade)
-      AND inherit.ancestor_id = $2
+    SELECT 1 FROM scope_access
+    WHERE principal_id = $1 AND scope_id = $2
 )::boolean
 `
 
@@ -128,6 +148,41 @@ func (q *Queries) CreateRootScope(ctx context.Context, arg CreateRootScopeParams
 	return i, err
 }
 
+const deleteIdPGroupMapping = `-- name: DeleteIdPGroupMapping :execrows
+DELETE FROM idp_group_mappings WHERE issuer = $1 AND group_name = $2 AND scope_id = $3
+`
+
+type DeleteIdPGroupMappingParams struct {
+	Issuer    string
+	GroupName string
+	ScopeID   uuid.UUID
+}
+
+func (q *Queries) DeleteIdPGroupMapping(ctx context.Context, arg DeleteIdPGroupMappingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteIdPGroupMapping, arg.Issuer, arg.GroupName, arg.ScopeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteScopeMember = `-- name: DeleteScopeMember :execrows
+DELETE FROM scope_members WHERE scope_id = $1 AND principal_id = $2
+`
+
+type DeleteScopeMemberParams struct {
+	ScopeID     uuid.UUID
+	PrincipalID uuid.UUID
+}
+
+func (q *Queries) DeleteScopeMember(ctx context.Context, arg DeleteScopeMemberParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteScopeMember, arg.ScopeID, arg.PrincipalID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getOrgSettings = `-- name: GetOrgSettings :one
 SELECT org_id, allowed_levels, max_depth, owner_principal_id, created_at, updated_at FROM org_settings WHERE org_id = $1
 `
@@ -188,6 +243,87 @@ func (q *Queries) GetScopeByPath(ctx context.Context, path string) (Scope, error
 		&i.CreatedBy,
 	)
 	return i, err
+}
+
+const getScopeMember = `-- name: GetScopeMember :one
+SELECT org_id, scope_id, principal_id, role, cascade, granted_by, created_at, updated_at, source, idp_issuer FROM scope_members WHERE scope_id = $1 AND principal_id = $2
+`
+
+type GetScopeMemberParams struct {
+	ScopeID     uuid.UUID
+	PrincipalID uuid.UUID
+}
+
+func (q *Queries) GetScopeMember(ctx context.Context, arg GetScopeMemberParams) (ScopeMember, error) {
+	row := q.db.QueryRow(ctx, getScopeMember, arg.ScopeID, arg.PrincipalID)
+	var i ScopeMember
+	err := row.Scan(
+		&i.OrgID,
+		&i.ScopeID,
+		&i.PrincipalID,
+		&i.Role,
+		&i.Cascade,
+		&i.GrantedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Source,
+		&i.IdpIssuer,
+	)
+	return i, err
+}
+
+const insertChildScope = `-- name: InsertChildScope :exec
+INSERT INTO scopes (id, org_id, parent_id, level, slug, name, depth, path, created_by)
+SELECT $1, p.org_id, p.id, $2, $3, $4, p.depth + 1, p.path || '/' || $3::text, $5
+FROM scopes p WHERE p.id = $6
+`
+
+type InsertChildScopeParams struct {
+	ID        uuid.UUID
+	Level     string
+	Slug      string
+	Name      string
+	CreatedBy *uuid.UUID
+	ParentID  uuid.UUID
+}
+
+// Principal path: no RETURNING, because the new scope becomes readable only
+// when the access trigger runs at the end of the statement.
+func (q *Queries) InsertChildScope(ctx context.Context, arg InsertChildScopeParams) error {
+	_, err := q.db.Exec(ctx, insertChildScope,
+		arg.ID,
+		arg.Level,
+		arg.Slug,
+		arg.Name,
+		arg.CreatedBy,
+		arg.ParentID,
+	)
+	return err
+}
+
+const insertIdPGroupMapping = `-- name: InsertIdPGroupMapping :exec
+INSERT INTO idp_group_mappings (org_id, issuer, group_name, scope_id, role, cascade)
+SELECT s.org_id, $1, $2, s.id, $3, $4 FROM scopes s WHERE s.id = $5
+ON CONFLICT (issuer, group_name, scope_id) DO UPDATE SET role = EXCLUDED.role, cascade = EXCLUDED.cascade
+`
+
+type InsertIdPGroupMappingParams struct {
+	Issuer    string
+	GroupName string
+	Role      string
+	Cascade   bool
+	ScopeID   uuid.UUID
+}
+
+func (q *Queries) InsertIdPGroupMapping(ctx context.Context, arg InsertIdPGroupMappingParams) error {
+	_, err := q.db.Exec(ctx, insertIdPGroupMapping,
+		arg.Issuer,
+		arg.GroupName,
+		arg.Role,
+		arg.Cascade,
+		arg.ScopeID,
+	)
+	return err
 }
 
 const insertOrgSettings = `-- name: InsertOrgSettings :one
@@ -276,6 +412,105 @@ func (q *Queries) ListAncestors(ctx context.Context, descendantID uuid.UUID) ([]
 	return items, nil
 }
 
+const listIdPGroupMappings = `-- name: ListIdPGroupMappings :many
+SELECT g.org_id, g.issuer, g.group_name, g.scope_id, g.role, g.cascade, g.created_at, s.path AS scope_path
+FROM idp_group_mappings g JOIN scopes s ON s.id = g.scope_id
+ORDER BY g.issuer, g.group_name, s.path
+`
+
+type ListIdPGroupMappingsRow struct {
+	OrgID     uuid.UUID
+	Issuer    string
+	GroupName string
+	ScopeID   uuid.UUID
+	Role      string
+	Cascade   bool
+	CreatedAt time.Time
+	ScopePath string
+}
+
+func (q *Queries) ListIdPGroupMappings(ctx context.Context) ([]ListIdPGroupMappingsRow, error) {
+	rows, err := q.db.Query(ctx, listIdPGroupMappings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListIdPGroupMappingsRow
+	for rows.Next() {
+		var i ListIdPGroupMappingsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Issuer,
+			&i.GroupName,
+			&i.ScopeID,
+			&i.Role,
+			&i.Cascade,
+			&i.CreatedAt,
+			&i.ScopePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMembershipsOfPrincipal = `-- name: ListMembershipsOfPrincipal :many
+SELECT m.org_id, m.scope_id, m.principal_id, m.role, m.cascade, m.granted_by, m.created_at, m.updated_at, m.source, m.idp_issuer, s.path AS scope_path
+FROM scope_members m JOIN scopes s ON s.id = m.scope_id
+WHERE m.principal_id = $1
+ORDER BY s.path
+`
+
+type ListMembershipsOfPrincipalRow struct {
+	OrgID       uuid.UUID
+	ScopeID     uuid.UUID
+	PrincipalID uuid.UUID
+	Role        string
+	Cascade     bool
+	GrantedBy   *uuid.UUID
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Source      string
+	IdpIssuer   *string
+	ScopePath   string
+}
+
+func (q *Queries) ListMembershipsOfPrincipal(ctx context.Context, principalID uuid.UUID) ([]ListMembershipsOfPrincipalRow, error) {
+	rows, err := q.db.Query(ctx, listMembershipsOfPrincipal, principalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMembershipsOfPrincipalRow
+	for rows.Next() {
+		var i ListMembershipsOfPrincipalRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.ScopeID,
+			&i.PrincipalID,
+			&i.Role,
+			&i.Cascade,
+			&i.GrantedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Source,
+			&i.IdpIssuer,
+			&i.ScopePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgRoots = `-- name: ListOrgRoots :many
 SELECT id, org_id, parent_id, level, slug, name, depth, path, created_at, created_by FROM scopes WHERE parent_id IS NULL ORDER BY path
 `
@@ -312,7 +547,7 @@ func (q *Queries) ListOrgRoots(ctx context.Context) ([]Scope, error) {
 }
 
 const listScopeMembers = `-- name: ListScopeMembers :many
-SELECT m.org_id, m.scope_id, m.principal_id, m.role, m.cascade, m.granted_by, m.created_at, m.updated_at, p.display_name
+SELECT m.org_id, m.scope_id, m.principal_id, m.role, m.cascade, m.granted_by, m.created_at, m.updated_at, m.source, m.idp_issuer, p.display_name
 FROM scope_members m JOIN principals p ON p.id = m.principal_id
 WHERE m.scope_id = $1
 ORDER BY p.display_name
@@ -327,6 +562,8 @@ type ListScopeMembersRow struct {
 	GrantedBy   *uuid.UUID
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Source      string
+	IdpIssuer   *string
 	DisplayName string
 }
 
@@ -348,6 +585,8 @@ func (q *Queries) ListScopeMembers(ctx context.Context, scopeID uuid.UUID) ([]Li
 			&i.GrantedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Source,
+			&i.IdpIssuer,
 			&i.DisplayName,
 		); err != nil {
 			return nil, err
@@ -425,25 +664,38 @@ func (q *Queries) MaxScopeDepthInOrg(ctx context.Context, orgID uuid.UUID) (int3
 }
 
 const readableScopes = `-- name: ReadableScopes :many
-SELECT DISTINCT s.id, s.org_id, s.parent_id, s.level, s.slug, s.name, s.depth, s.path, s.created_at, s.created_by
-FROM scope_members m
-JOIN scope_closure c ON c.ancestor_id = m.scope_id
-JOIN scopes s ON s.id = c.descendant_id
-WHERE m.principal_id = $1 AND (c.distance = 0 OR m.cascade)
+SELECT s.id, s.org_id, s.parent_id, s.level, s.slug, s.name, s.depth, s.path, s.created_at, s.created_by, a.rank
+FROM scope_access a
+JOIN scopes s ON s.id = a.scope_id
+WHERE a.principal_id = $1 AND a.rank >= 1
 ORDER BY s.path
 `
 
+type ReadableScopesRow struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	ParentID  *uuid.UUID
+	Level     string
+	Slug      string
+	Name      string
+	Depth     int32
+	Path      string
+	CreatedAt time.Time
+	CreatedBy *uuid.UUID
+	Rank      int16
+}
+
 // Scopes whose own memories the principal may read (direct membership or a
 // cascading ancestor grant). Ancestors of these are readable as inherited.
-func (q *Queries) ReadableScopes(ctx context.Context, principalID uuid.UUID) ([]Scope, error) {
+func (q *Queries) ReadableScopes(ctx context.Context, principalID uuid.UUID) ([]ReadableScopesRow, error) {
 	rows, err := q.db.Query(ctx, readableScopes, principalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Scope
+	var items []ReadableScopesRow
 	for rows.Next() {
-		var i Scope
+		var i ReadableScopesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -455,6 +707,7 @@ func (q *Queries) ReadableScopes(ctx context.Context, principalID uuid.UUID) ([]
 			&i.Path,
 			&i.CreatedAt,
 			&i.CreatedBy,
+			&i.Rank,
 		); err != nil {
 			return nil, err
 		}
@@ -466,39 +719,19 @@ func (q *Queries) ReadableScopes(ctx context.Context, principalID uuid.UUID) ([]
 	return items, nil
 }
 
-const rolesOnScope = `-- name: RolesOnScope :many
-SELECT m.role
-FROM scope_members m
-JOIN scope_closure c ON c.ancestor_id = m.scope_id
-WHERE c.descendant_id = $1
-  AND m.principal_id = $2
-  AND (c.distance = 0 OR m.cascade)
+const syncIdPGrants = `-- name: SyncIdPGrants :exec
+SELECT tm_sync_idp_grants($1::uuid, $2::text, $3::text[])
 `
 
-type RolesOnScopeParams struct {
-	ScopeID     uuid.UUID
+type SyncIdPGrantsParams struct {
 	PrincipalID uuid.UUID
+	Issuer      string
+	Groups      []string
 }
 
-// Roles that apply to a scope: a direct membership, or a cascading grant on an ancestor.
-func (q *Queries) RolesOnScope(ctx context.Context, arg RolesOnScopeParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, rolesOnScope, arg.ScopeID, arg.PrincipalID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var role string
-		if err := rows.Scan(&role); err != nil {
-			return nil, err
-		}
-		items = append(items, role)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) SyncIdPGrants(ctx context.Context, arg SyncIdPGrantsParams) error {
+	_, err := q.db.Exec(ctx, syncIdPGrants, arg.PrincipalID, arg.Issuer, arg.Groups)
+	return err
 }
 
 const updateOrgSettings = `-- name: UpdateOrgSettings :one
@@ -533,8 +766,8 @@ INSERT INTO scope_members (org_id, scope_id, principal_id, role, cascade, grante
 SELECT s.org_id, s.id, $1, $2, $3, $4 FROM scopes s WHERE s.id = $5
 ON CONFLICT (scope_id, principal_id)
 DO UPDATE SET role = EXCLUDED.role, cascade = EXCLUDED.cascade,
-              granted_by = EXCLUDED.granted_by, updated_at = now()
-RETURNING org_id, scope_id, principal_id, role, cascade, granted_by, created_at, updated_at
+              granted_by = EXCLUDED.granted_by, source = 'manual', idp_issuer = NULL, updated_at = now()
+RETURNING org_id, scope_id, principal_id, role, cascade, granted_by, created_at, updated_at, source, idp_issuer
 `
 
 type UpsertScopeMemberParams struct {
@@ -563,6 +796,8 @@ func (q *Queries) UpsertScopeMember(ctx context.Context, arg UpsertScopeMemberPa
 		&i.GrantedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.IdpIssuer,
 	)
 	return i, err
 }

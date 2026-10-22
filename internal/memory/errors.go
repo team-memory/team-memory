@@ -3,8 +3,11 @@ package memory
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/team-memory/team-memory/internal/secrets"
 )
 
 var (
@@ -21,7 +24,34 @@ var (
 	ErrNotActive = errors.New("memory is not active")
 	// ErrNotImplemented marks contract methods whose behaviour lands later.
 	ErrNotImplemented = errors.New("not implemented")
+	// ErrBrowserReviewRequired means the action completes a review or a
+	// promotion and the caller is not a human in a portal session. MCP and
+	// bearer-token API calls always get this, whatever the principal's role.
+	ErrBrowserReviewRequired = errors.New("this action requires explicit review in the Team Memory portal")
+	// ErrPromotionStale means the source changed (new revision, archived,
+	// approval withdrawn, submitter lost authority) since the request was
+	// submitted; it has been marked stale and must be resubmitted.
+	ErrPromotionStale = errors.New("promotion request is stale; resubmit it from the source scope")
+	// ErrPromotionClosed means the request was already rejected, cancelled
+	// or marked stale.
+	ErrPromotionClosed = errors.New("promotion request is closed")
+	// ErrRateLimited means the principal exceeded its request budget.
+	ErrRateLimited = errors.New("rate limit exceeded")
 )
+
+// SecretError means input looked like it contained a credential. Findings
+// name fields and rule types only, never the matched text.
+type SecretError struct {
+	Findings []secrets.Finding
+}
+
+func (e *SecretError) Error() string {
+	parts := make([]string, 0, len(e.Findings))
+	for _, f := range e.Findings {
+		parts = append(parts, f.Field+": "+f.Rule)
+	}
+	return "possible secret detected (" + strings.Join(parts, ", ") + "); remove it, rotate the credential if it was real, and retry"
+}
 
 // ValidationError describes invalid input.
 type ValidationError struct{ Msg string }

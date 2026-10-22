@@ -156,10 +156,15 @@ func (q *Queries) FullTextCandidates(ctx context.Context, arg FullTextCandidates
 const searchRows = `-- name: SearchRows :many
 SELECT m.id, m.scope_id, s.path AS scope_path, s.depth AS scope_depth, m.kind, m.status, m.trust,
        m.current_revision, m.created_by, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri
+       r.title, r.content, r.rationale, r.source_uri,
+       ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+LEFT JOIN approvals ap ON m.trust = 'approved' AND ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.id = ANY($1::uuid[])
 `
 
@@ -178,8 +183,11 @@ type SearchRowsRow struct {
 	Content         string
 	Rationale       string
 	SourceUri       *string
+	ReviewerID      *uuid.UUID
+	ReviewedAt      *time.Time
 }
 
+// The approval behind trust=approved: latest outcome of the current revision.
 func (q *Queries) SearchRows(ctx context.Context, ids []uuid.UUID) ([]SearchRowsRow, error) {
 	rows, err := q.db.Query(ctx, searchRows, ids)
 	if err != nil {
@@ -204,6 +212,8 @@ func (q *Queries) SearchRows(ctx context.Context, ids []uuid.UUID) ([]SearchRows
 			&i.Content,
 			&i.Rationale,
 			&i.SourceUri,
+			&i.ReviewerID,
+			&i.ReviewedAt,
 		); err != nil {
 			return nil, err
 		}

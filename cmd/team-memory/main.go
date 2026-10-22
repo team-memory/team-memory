@@ -1,8 +1,11 @@
 // Command team-memory runs the Team Memory server and its operator CLI.
 //
-// Operator subcommands (init, scope, principal, member, token) act directly on
-// the database and are trusted by virtue of database access. Authorized,
-// audited administration through the API arrives in stage 04.
+// Operator subcommands (init, scope, principal, member, token, memory, idp,
+// audit, embeddings, jobs) connect as the operator role (DATABASE_URL) and
+// are trusted by virtue of that access. serve connects as the app role
+// (TEAM_MEMORY_APP_DATABASE_URL) and worker as the worker role
+// (TEAM_MEMORY_WORKER_DATABASE_URL); both refuse to start with a role that
+// could bypass row-level security.
 package main
 
 import (
@@ -23,6 +26,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/team-memory/team-memory/internal/auth"
@@ -35,21 +39,27 @@ import (
 const usage = `usage: team-memory <command> [flags]
 
 commands:
-  serve                         run the MCP server
+  serve                         run the MCP server (app database role)
   migrate                       apply database migrations
   init                          create the first organization, owner and token
+  db create-login               create a login role for serve, worker or operator
   scope create|list|config      manage the scope tree
-  principal create|list         manage principals
-  principal identities|link-identity
-                                show or link SSO identities (operator recovery)
-  member add|list               grant scope roles (initial bootstrap)
+  principal create|list|disable|enable
+                                manage principals
+  principal identities|link-identity|unlink-identity
+                                show, link or unlink SSO identities (operator recovery)
+  member add|revoke|list        grant and revoke scope roles
+  memory archive                archive a memory as a maintainer principal
+  idp-groups add|remove|list    map IdP groups to scope roles (optional)
+  audit list                    show recent audit events of a scope
   token create|list|revoke      manage personal access tokens
   worker                        run embedding jobs for the configured model
   embeddings add-model|list|enable|disable
                                 manage embedding models and their indexes
   jobs status|retry-dead        inspect the job queue, requeue dead-lettered jobs
 
-Configuration comes from the environment: DATABASE_URL, TEAM_MEMORY_LISTEN,
+Configuration comes from the environment: DATABASE_URL (operator role),
+TEAM_MEMORY_APP_DATABASE_URL (serve), TEAM_MEMORY_WORKER_DATABASE_URL (worker), TEAM_MEMORY_LISTEN,
 TEAM_MEMORY_DEFAULT_SCOPE, TEAM_MEMORY_PUBLIC_URL, TEAM_MEMORY_SSO_CONFIG (enables
 OAuth sign-in through upstream OIDC providers), and for retrieval TEAM_MEMORY_OLLAMA_URL,
 TEAM_MEMORY_EMBEDDING_MODEL and related settings (see README).`
@@ -89,6 +99,14 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return memberCmd(ctx, args)
 	case "token":
 		return tokenCmd(ctx, args)
+	case "db":
+		return dbCmd(ctx, args)
+	case "memory":
+		return memoryCmd(ctx, args)
+	case "idp-groups":
+		return idpGroupsCmd(ctx, args)
+	case "audit":
+		return auditCmd(ctx, args)
 	case "worker":
 		return workerCmd(ctx, args)
 	case "embeddings":
@@ -102,6 +120,9 @@ func run(ctx context.Context, cmd string, args []string) error {
 	return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 }
 
+// withPool connects as the operator (DATABASE_URL) and refuses a role that
+// is neither a superuser nor a member of team_memory_operator: operator
+// commands would otherwise silently see nothing under RLS.
 func withPool(ctx context.Context, fn func(*pgxpool.Pool) error) error {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -112,6 +133,28 @@ func withPool(ctx context.Context, fn func(*pgxpool.Pool) error) error {
 		return err
 	}
 	defer pool.Close()
+	if err := postgres.CheckOperatorRole(ctx, pool); err != nil {
+		return err
+	}
+	return fn(pool)
+}
+
+// withRuntimePool connects a runtime role from envKey and checks it with
+// postgres.CheckRuntimeRole. There is no fallback to DATABASE_URL: the
+// operator role would bypass the policies serve and worker depend on.
+func withRuntimePool(ctx context.Context, envKey, role string, tracer pgx.QueryTracer, fn func(*pgxpool.Pool) error) error {
+	url := os.Getenv(envKey)
+	if url == "" {
+		return fmt.Errorf("%s is not set; create a login role with `team-memory db create-login` (see docs/decisions/rls.md)", envKey)
+	}
+	pool, err := postgres.OpenWithTracer(ctx, url, tracer)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := postgres.CheckRuntimeRole(ctx, pool, role); err != nil {
+		return err
+	}
 	return fn(pool)
 }
 
@@ -130,12 +173,21 @@ func serve(ctx context.Context, args []string) error {
 	_ = fs.Parse(args)
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	return withPool(ctx, func(pool *pgxpool.Pool) error {
-		if *migrate {
-			if err := postgres.Migrate(ctx, pool); err != nil {
-				return err
-			}
+	if *migrate {
+		if err := withPool(ctx, func(pool *pgxpool.Pool) error { return postgres.Migrate(ctx, pool) }); err != nil {
+			return err
 		}
+	}
+	rate, err := envFloat("TEAM_MEMORY_RATE_LIMIT", 20)
+	if err != nil {
+		return err
+	}
+	burst, err := envInt("TEAM_MEMORY_RATE_BURST", 60)
+	if err != nil {
+		return err
+	}
+	guard := &postgres.TxGuard{Logger: logger}
+	return withRuntimePool(ctx, "TEAM_MEMORY_APP_DATABASE_URL", postgres.RoleApp, guard, func(pool *pgxpool.Pool) error {
 		srch, err := newSearch(ctx, pool, logger)
 		if err != nil {
 			return err
@@ -143,9 +195,12 @@ func serve(ctx context.Context, args []string) error {
 		handler := server.New(server.Options{
 			Pool: pool, Search: srch, Logger: logger, DefaultScope: *defaultScope,
 			SSOConfigPath: os.Getenv("TEAM_MEMORY_SSO_CONFIG"), PublicURL: os.Getenv("TEAM_MEMORY_PUBLIC_URL"),
+			RatePerSecond: rate, RateBurst: burst,
 		})
 		handler.Start(ctx)
-		srv := &http.Server{Addr: *listen, Handler: logRequests(logger, handler), ReadHeaderTimeout: 10 * time.Second}
+		srv := &http.Server{Addr: *listen, Handler: logRequests(logger, handler), ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second,
+			MaxHeaderBytes: 64 << 10}
 		errc := make(chan error, 1)
 		go func() { errc <- srv.ListenAndServe() }()
 		logger.Info("serving", "addr", *listen, "mcp_path", "/mcp")
@@ -198,9 +253,17 @@ func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
 			mcpMethod = jsonRPCMethod(captured.buf.Bytes())
 		}
 		logger.Info("request", "method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"mcp_protocol_version", r.Header.Get("Mcp-Protocol-Version"), "mcp_method", mcpMethod,
-			"user_agent", r.UserAgent(), "duration_ms", time.Since(start).Milliseconds())
+			"request_id", w.Header().Get("X-Request-Id"),
+			"mcp_protocol_version", truncate(r.Header.Get("Mcp-Protocol-Version"), 32), "mcp_method", truncate(mcpMethod, 64),
+			"user_agent", truncate(r.UserAgent(), 200), "duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 // prefixCaptureLimit bounds how much of a request body is kept for finding
@@ -347,7 +410,7 @@ func scopeCmd(ctx context.Context, args []string) error {
 
 func principalCmd(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: team-memory principal create|list|identities|link-identity")
+		return errors.New("usage: team-memory principal create|list|disable|enable|identities|link-identity|unlink-identity")
 	}
 	return withPool(ctx, func(pool *pgxpool.Pool) error {
 		q := db.New(pool)
@@ -410,6 +473,44 @@ func principalCmd(ctx context.Context, args []string) error {
 				return err
 			}
 			fmt.Println("linked")
+		case "unlink-identity":
+			// Operator recovery for a wrong link. An identity is removed from
+			// one principal; it is never moved. Audited.
+			fs := flag.NewFlagSet("principal unlink-identity", flag.ExitOnError)
+			principal := fs.String("principal", "", "principal id (required)")
+			issuer := fs.String("issuer", "", "upstream issuer URL (required)")
+			subject := fs.String("subject", "", "upstream subject (required)")
+			_ = fs.Parse(args[1:])
+			pid, err := uuid.Parse(*principal)
+			if err != nil {
+				return errors.New("--principal must be a principal id")
+			}
+			if err := auth.NewIdentities(pool).Unlink(ctx, pid, auth.ExternalIdentity{Issuer: *issuer, Subject: *subject}); err != nil {
+				return err
+			}
+			fmt.Println("unlinked")
+		case "disable", "enable":
+			// Disabling stops every credential of the principal at its next
+			// request (PATs, OAuth access and refresh tokens).
+			if len(args) < 2 {
+				return fmt.Errorf("usage: team-memory principal %s <principal-id>", args[0])
+			}
+			pid, err := uuid.Parse(args[1])
+			if err != nil {
+				return errors.New("principal id must be a UUID")
+			}
+			n, err := q.SetPrincipalDisabled(ctx, db.SetPrincipalDisabledParams{ID: pid, Disabled: args[0] == "disable"})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return fmt.Errorf("principal %s not found", pid)
+			}
+			if err := q.InsertAuditEvent(ctx, db.InsertAuditEventParams{Action: "principal." + args[0], TargetType: "principal",
+				TargetID: pid.String(), Outcome: "success", Details: []byte(`{"via":"cli"}`)}); err != nil {
+				return err
+			}
+			fmt.Println(args[0] + "d")
 		default:
 			return fmt.Errorf("unknown principal command %q", args[0])
 		}
@@ -419,7 +520,7 @@ func principalCmd(ctx context.Context, args []string) error {
 
 func memberCmd(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: team-memory member add|list")
+		return errors.New("usage: team-memory member add|revoke|list")
 	}
 	return withPool(ctx, func(pool *pgxpool.Pool) error {
 		svc := memory.NewService(pool)
@@ -443,6 +544,19 @@ func memberCmd(ctx context.Context, args []string) error {
 				return err
 			}
 			fmt.Println("granted")
+		case "revoke":
+			fs := flag.NewFlagSet("member revoke", flag.ExitOnError)
+			scope := fs.String("scope", "", "scope path or id (required)")
+			principal := fs.String("principal", "", "principal id (required)")
+			_ = fs.Parse(args[1:])
+			pid, err := uuid.Parse(*principal)
+			if err != nil {
+				return errors.New("--principal must be a principal id")
+			}
+			if err := svc.RemoveMember(ctx, *scope, pid); err != nil {
+				return err
+			}
+			fmt.Println("revoked; access ends with the principal's next request")
 		case "list":
 			fs := flag.NewFlagSet("member list", flag.ExitOnError)
 			scope := fs.String("scope", "", "scope path or id (required)")

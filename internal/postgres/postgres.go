@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -16,9 +17,18 @@ import (
 
 // Open connects a pool and verifies the connection.
 func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	return OpenWithTracer(ctx, url, nil)
+}
+
+// OpenWithTracer is Open with a query tracer (for example a TxGuard on the
+// app pool).
+func OpenWithTracer(ctx context.Context, url string, tracer pgx.QueryTracer) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	if tracer != nil {
+		cfg.ConnConfig.Tracer = tracer
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

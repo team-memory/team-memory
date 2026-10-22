@@ -33,8 +33,16 @@ WHERE principal_id = $1
 ORDER BY created_at;
 
 -- name: InsertAuditEvent :exec
-INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details, request_id)
+VALUES (@org_id, @actor_id, @action, @target_type, @target_id, @scope_id, @outcome, @details, sqlc.narg('request_id'));
+
+-- name: DeletePrincipalIdentity :execrows
+-- Operator recovery: unlinks an identity from one principal. Never moves it.
+DELETE FROM principal_identities WHERE principal_id = @principal_id AND issuer = @issuer AND subject = @subject;
+
+-- name: SetPrincipalDisabled :execrows
+UPDATE principals SET disabled_at = CASE WHEN @disabled::boolean THEN coalesce(disabled_at, now()) ELSE NULL END
+WHERE id = @id;
 
 -- name: GetPrincipalByIdentity :one
 SELECT p.* FROM principal_identities i

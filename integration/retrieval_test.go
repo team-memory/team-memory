@@ -21,31 +21,22 @@ import (
 func setEmbedding(t *testing.T, tr *tree, id uuid.UUID, text string) {
 	t.Helper()
 	v := embeddings.FakeVector(text, 768)
-	if _, err := tr.pool.Exec(context.Background(),
+	if _, err := tr.db.Admin.Exec(context.Background(),
 		`UPDATE memory_embeddings SET embedding = $2 WHERE memory_id = $1`, id, pgvector.NewVector(v)); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// approve records an approval of the memory's current revision, as the
-// stage 05 browser review will. Nothing in stages 01-02 can approve.
+// approve approves the memory's current revision as the owner in a browser
+// review session (the trusted review service the stage 05 portal calls).
 func approve(t *testing.T, tr *tree, id uuid.UUID) {
 	t.Helper()
-	ctx := context.Background()
-	var rev int32
-	var org, scope uuid.UUID
-	if err := tr.pool.QueryRow(ctx, `UPDATE memories SET trust = 'approved', state_version = state_version + 1
-		WHERE id = $1 RETURNING current_revision, org_id, scope_id`, id).Scan(&rev, &org, &scope); err != nil {
-		t.Fatal(err)
-	}
-	ev, err := db.New(tr.pool).InsertMemoryEvent(ctx, db.InsertMemoryEventParams{OrgID: org, ScopeID: scope, MemoryID: id,
-		Revision: rev, EventType: "approved", ActorID: tr.owner.ID, Snapshot: []byte(`{}`)})
+	m, err := tr.svc.Get(context.Background(), tr.owner, id, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.pool.Exec(ctx, `INSERT INTO approvals (org_id, memory_id, revision, event_id, decision, reviewer_id)
-		VALUES ($1, $2, $3, $4, 'approved', $5)`, org, id, rev, ev.ID, tr.owner.ID); err != nil {
-		t.Fatal(err)
+	if _, err := tr.svc.Approve(context.Background(), portal(tr.owner), memory.ReviewInput{ID: id, Revision: m.Revision}); err != nil {
+		t.Fatalf("approve %s: %v", id, err)
 	}
 }
 
@@ -265,15 +256,11 @@ func TestEffectiveOverridesHideOnlyForDescendantReaders(t *testing.T) {
 	if _, ok := byID(tr.find(t, tr.owner, p), org.ID); ok {
 		t.Fatal("reapproved override not effective")
 	}
-	var rev int32
-	_ = tr.pool.QueryRow(ctx, `SELECT current_revision FROM memories WHERE id = $1`, proj.ID).Scan(&rev)
-	ev, err := db.New(tr.pool).InsertMemoryEvent(ctx, db.InsertMemoryEventParams{OrgID: tr.org.ID, ScopeID: tr.payments.ID,
-		MemoryID: proj.ID, Revision: rev, EventType: "review_rejected", ActorID: tr.owner.ID, Snapshot: []byte(`{}`)})
+	cur, err := tr.svc.Get(ctx, tr.owner, proj.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.pool.Exec(ctx, `INSERT INTO approvals (org_id, memory_id, revision, event_id, decision, reviewer_id, decided_at)
-		VALUES ($1, $2, $3, $4, 'rejected', $5, now() + interval '1 second')`, tr.org.ID, proj.ID, rev, ev.ID, tr.owner.ID); err != nil {
+	if _, err := tr.svc.Reject(ctx, portal(tr.owner), memory.ReviewInput{ID: proj.ID, Revision: cur.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := byID(tr.find(t, tr.owner, p), org.ID); !ok {
@@ -300,7 +287,7 @@ func TestConflictCandidates(t *testing.T) {
 			break
 		}
 	}
-	rows, err := db.New(tr.pool).ListConflictCandidates(ctx, "nomic-embed-text")
+	rows, err := db.New(tr.db.Admin).ListConflictCandidates(ctx, "nomic-embed-text")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,11 +376,11 @@ func TestOverridesOnlyFromActiveMemoriesInTheChain(t *testing.T) {
 	}
 
 	// A memory from another organization cannot be named as an override target.
-	other, err := tr.svc.CreateOrganization(ctx, tr.owner.ID, "globex", "Globex")
+	other, err := tr.admin.CreateOrganization(ctx, tr.owner.ID, "globex", "Globex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.svc.AddMember(ctx, uuid.Nil, "globex", tr.owner.ID, memory.RoleMaintainer, true); err != nil {
+	if err := tr.admin.AddMember(ctx, uuid.Nil, "globex", tr.owner.ID, memory.RoleMaintainer, true); err != nil {
 		t.Fatal(err)
 	}
 	var ve *memory.ValidationError

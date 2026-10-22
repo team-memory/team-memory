@@ -74,8 +74,10 @@ type clientRegistry struct {
 	fetch    *http.Client
 	now      func() time.Time
 
+	// state holds dynamically registered clients; metadata documents are
+	// cached per process and refetched as needed.
+	state stateStore
 	mu    sync.Mutex
-	dcr   map[string]*client
 	cache map[string]cachedClient
 }
 
@@ -84,10 +86,10 @@ type cachedClient struct {
 	expires time.Time
 }
 
-func newClientRegistry(cfg Registration, loginURL string) *clientRegistry {
+func newClientRegistry(cfg Registration, loginURL string, state stateStore) *clientRegistry {
 	return &clientRegistry{
 		cfg: cfg, loginURL: loginURL, fetch: publicOnlyHTTPClient(), now: time.Now,
-		dcr: map[string]*client{}, cache: map[string]cachedClient{},
+		state: state, cache: map[string]cachedClient{},
 	}
 }
 
@@ -101,12 +103,11 @@ func (r *clientRegistry) get(ctx context.Context, id string) (*client, error) {
 	if !r.cfg.Dynamic {
 		return nil, errNotFound
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, ok := r.dcr[id]
-	if !ok {
-		return nil, errNotFound
+	c, err := r.state.getClient(ctx, id)
+	if err != nil {
+		return nil, err
 	}
+	c.loginURL = r.loginURL
 	return c, nil
 }
 
@@ -203,14 +204,14 @@ func (r *clientRegistry) register(w http.ResponseWriter, req *http.Request) {
 		id: "tmc_" + randomString(18), name: m.ClientName, clientURI: m.ClientURI,
 		redirectURIs: m.RedirectURIs, source: "dcr", loginURL: r.loginURL,
 	}
-	r.mu.Lock()
-	if len(r.dcr) >= maxDCRClients {
-		r.mu.Unlock()
-		registrationError(w, "invalid_client_metadata", "registration limit reached")
+	if err := r.state.putClient(req.Context(), c); err != nil {
+		if errors.Is(err, errCapacity) {
+			registrationError(w, "invalid_client_metadata", "registration limit reached")
+			return
+		}
+		http.Error(w, "registration failed", http.StatusInternalServerError)
 		return
 	}
-	r.dcr[c.id] = c
-	r.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

@@ -13,8 +13,8 @@ VALUES (@memory_id, @revision, @org_id, @scope_id, @kind, @title, @content,
 RETURNING memory_id, revision, created_at;
 
 -- name: InsertRevisionOverride :exec
-INSERT INTO revision_overrides (memory_id, revision, org_id, overridden_memory_id)
-VALUES ($1, $2, $3, $4);
+INSERT INTO revision_overrides (memory_id, revision, org_id, scope_id, overridden_memory_id)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: InsertMemoryEvent :one
 INSERT INTO memory_events (org_id, scope_id, memory_id, revision, event_type, actor_id, snapshot)
@@ -41,6 +41,12 @@ SET status = 'superseded', superseded_by = @superseded_by,
 WHERE id = @id
 RETURNING *;
 
+-- name: SetMemoryTrust :one
+UPDATE memories
+SET trust = @trust, state_version = state_version + 1, updated_at = now()
+WHERE id = @id
+RETURNING *;
+
 -- name: SetMemoryArchived :one
 UPDATE memories
 SET status = 'archived', state_version = state_version + 1, updated_at = now()
@@ -52,10 +58,16 @@ SELECT m.id, m.org_id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.tru
        m.current_revision, m.state_version, m.superseded_by,
        m.promoted_from_memory_id, m.promoted_from_revision,
        m.created_by, m.created_at, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at
+       r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at,
+       ap.decision AS review_decision, ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+-- Latest review outcome of the current revision.
+LEFT JOIN approvals ap ON ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.id = $1;
 
 -- name: ListRevisions :many
@@ -80,10 +92,15 @@ ORDER BY seq;
 -- name: RecentMemories :many
 SELECT m.id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.trust,
        m.current_revision, m.created_by, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri
+       r.title, r.content, r.rationale, r.source_uri,
+       ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+LEFT JOIN approvals ap ON m.trust = 'approved' AND ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.scope_id = ANY(@scope_ids::uuid[])
   AND m.status = 'active'
   AND (cardinality(@kinds::text[]) = 0 OR m.kind = ANY(@kinds::text[]))

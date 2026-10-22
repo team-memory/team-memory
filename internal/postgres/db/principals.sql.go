@@ -34,6 +34,25 @@ func (q *Queries) CreatePrincipal(ctx context.Context, arg CreatePrincipalParams
 	return i, err
 }
 
+const deletePrincipalIdentity = `-- name: DeletePrincipalIdentity :execrows
+DELETE FROM principal_identities WHERE principal_id = $1 AND issuer = $2 AND subject = $3
+`
+
+type DeletePrincipalIdentityParams struct {
+	PrincipalID uuid.UUID
+	Issuer      string
+	Subject     string
+}
+
+// Operator recovery: unlinks an identity from one principal. Never moves it.
+func (q *Queries) DeletePrincipalIdentity(ctx context.Context, arg DeletePrincipalIdentityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePrincipalIdentity, arg.PrincipalID, arg.Issuer, arg.Subject)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getPrincipal = `-- name: GetPrincipal :one
 SELECT id, kind, display_name, created_at, disabled_at FROM principals WHERE id = $1
 `
@@ -76,8 +95,8 @@ func (q *Queries) GetPrincipalByIdentity(ctx context.Context, arg GetPrincipalBy
 }
 
 const insertAuditEvent = `-- name: InsertAuditEvent :exec
-INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO audit_events (org_id, actor_id, action, target_type, target_id, scope_id, outcome, details, request_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertAuditEventParams struct {
@@ -89,6 +108,7 @@ type InsertAuditEventParams struct {
 	ScopeID    *uuid.UUID
 	Outcome    string
 	Details    []byte
+	RequestID  *string
 }
 
 func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) error {
@@ -101,6 +121,7 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 		arg.ScopeID,
 		arg.Outcome,
 		arg.Details,
+		arg.RequestID,
 	)
 	return err
 }
@@ -313,6 +334,24 @@ WHERE id = $1 AND revoked_at IS NULL
 
 func (q *Queries) RevokePersonalAccessToken(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, revokePersonalAccessToken, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setPrincipalDisabled = `-- name: SetPrincipalDisabled :execrows
+UPDATE principals SET disabled_at = CASE WHEN $1::boolean THEN coalesce(disabled_at, now()) ELSE NULL END
+WHERE id = $2
+`
+
+type SetPrincipalDisabledParams struct {
+	Disabled bool
+	ID       uuid.UUID
+}
+
+func (q *Queries) SetPrincipalDisabled(ctx context.Context, arg SetPrincipalDisabledParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPrincipalDisabled, arg.Disabled, arg.ID)
 	if err != nil {
 		return 0, err
 	}

@@ -8,13 +8,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
 	"github.com/team-memory/team-memory/internal/auth"
+	"github.com/team-memory/team-memory/internal/ratelimit"
 )
 
 // Endpoint paths. The authorization server lives under /oauth/ on the same
@@ -36,12 +39,22 @@ const (
 // Options carries dependencies that are not configuration.
 type Options struct {
 	Identities *auth.Identities
-	Logger     *slog.Logger
+	// Pool persists OAuth state (clients, pending authorizations, codes,
+	// refresh tokens) so restarts and replicas share it. Nil keeps state in
+	// memory, which only unit tests use.
+	Pool   *pgxpool.Pool
+	Logger *slog.Logger
 	// HTTPClient is used for upstream discovery and code exchange.
 	HTTPClient *http.Client
 	// MetadataClient fetches client metadata documents. Tests replace it;
 	// the default refuses non-public addresses.
 	MetadataClient *http.Client
+	// Audit records sign-ins. Nil disables sign-in audit (unit tests).
+	Audit *auth.FailureAuditor
+	// RatePerMinute limits requests per client address to the
+	// registration, authorization, login and token endpoints (default 60;
+	// negative disables).
+	RatePerMinute int
 }
 
 // Server is the authorization server facade.
@@ -55,7 +68,8 @@ type Server struct {
 	upstreamOrigins []string
 	identities      *auth.Identities
 	verifier        *AccessTokens
-	logins          *logins
+	audit           *auth.FailureAuditor
+	limiter         *ratelimit.Limiter
 	logger          *slog.Logger
 	now             func() time.Time
 }
@@ -75,13 +89,23 @@ func New(cfg *Config, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		cfg: cfg, keys: keys, upstreams: map[string]*upstream{}, identities: opts.Identities,
-		logins: &logins{m: map[string]*pendingLogin{}}, logger: opts.Logger, now: time.Now,
+		audit: opts.Audit, logger: opts.Logger, now: time.Now,
 	}
-	s.clients = newClientRegistry(cfg.Registration, cfg.Issuer+pathLogin)
+	switch {
+	case opts.RatePerMinute == 0:
+		s.limiter = ratelimit.New(1, 60)
+	case opts.RatePerMinute > 0:
+		s.limiter = ratelimit.New(float64(opts.RatePerMinute)/60, opts.RatePerMinute)
+	}
+	var state stateStore = newMemState(time.Now)
+	if opts.Pool != nil {
+		state = &pgState{pool: opts.Pool, now: time.Now}
+	}
+	s.clients = newClientRegistry(cfg.Registration, cfg.Issuer+pathLogin, state)
 	if opts.MetadataClient != nil {
 		s.clients.fetch = opts.MetadataClient
 	}
-	s.store = newStore(cfg, keys, s.clients)
+	s.store = newStore(cfg, keys, s.clients, state)
 	for _, p := range cfg.Providers {
 		up := newUpstream(p, cfg.Issuer+pathCallback+p.ID, opts.HTTPClient)
 		if _, err := up.clientSecret(); err != nil {
@@ -174,17 +198,67 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.Handle("GET /.well-known/oauth-authorization-server", asm)
 	mux.Handle("GET /.well-known/openid-configuration", asm)
 	if s.cfg.Registration.Dynamic {
-		mux.HandleFunc(pathRegister, s.clients.register)
+		mux.Handle(pathRegister, s.limit(http.HandlerFunc(s.clients.register)))
 	}
-	mux.HandleFunc("GET "+pathLogin, s.consent)
-	mux.HandleFunc("POST "+pathLogin, s.approve)
-	mux.HandleFunc("GET "+pathCallback+"{provider}", s.callback)
-	mux.Handle(pathAuthorize, s.withResource(s.provider))
-	mux.Handle(pathToken, s.withResource(s.provider))
+	mux.Handle("GET "+pathLogin, s.limit(http.HandlerFunc(s.consent)))
+	mux.Handle("POST "+pathLogin, s.limit(s.withIssuer(http.HandlerFunc(s.approve))))
+	mux.Handle("GET "+pathCallback+"{provider}", s.limit(s.withIssuer(http.HandlerFunc(s.callback))))
+	mux.Handle(pathAuthorize, s.limit(s.withIssuer(s.withResource(s.provider))))
+	mux.Handle(pathToken, s.limit(s.withResource(s.provider)))
 	// Remaining op endpoints: authorize callback, JWKS, revocation,
 	// userinfo. Introspection, end_session and device authorization are
 	// not advertised, and the storage refuses them.
-	mux.Handle("/oauth/", s.provider)
+	mux.Handle("/oauth/", s.withIssuer(s.provider))
+}
+
+// limit answers 429 when a client address exceeds the per-minute budget.
+func (s *Server) limit(next http.Handler) http.Handler {
+	if s.limiter == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ok, wait := s.limiter.Allow(auth.ClientAddr(r.Context())); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withIssuer adds the RFC 9207 iss parameter to authorization responses:
+// every redirect from the authorization server to a client's redirect URI
+// that carries a code or an error. It lets clients detect mix-up attacks.
+func (s *Server) withIssuer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&issWriter{ResponseWriter: w, issuer: s.cfg.Issuer}, r)
+	})
+}
+
+type issWriter struct {
+	http.ResponseWriter
+	issuer string
+}
+
+func (w *issWriter) WriteHeader(code int) {
+	if code >= 300 && code < 400 {
+		w.Header().Set("Location", addIssuer(w.Header().Get("Location"), w.issuer))
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func addIssuer(loc, issuer string) string {
+	u, err := url.Parse(loc)
+	if err != nil || strings.HasPrefix(loc, issuer+"/") || loc == "" {
+		return loc
+	}
+	q := u.Query()
+	if (q.Get("code") == "" && q.Get("error") == "") || q.Get("iss") != "" {
+		return loc
+	}
+	q.Set("iss", issuer)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // withResource validates the RFC 8707 resource parameter on authorization
@@ -257,21 +331,22 @@ func (s *Server) protectedResource(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) authServerMetadata(w http.ResponseWriter, _ *http.Request) {
 	iss := s.cfg.Issuer
 	m := map[string]any{
-		"issuer":                                     iss,
-		"authorization_endpoint":                     iss + pathAuthorize,
-		"token_endpoint":                             iss + pathToken,
-		"jwks_uri":                                   iss + pathJWKS,
-		"revocation_endpoint":                        iss + pathRevoke,
-		"scopes_supported":                           []string{ScopeMemory, oidc.ScopeOfflineAccess},
-		"response_types_supported":                   []string{"code"},
-		"response_modes_supported":                   []string{"query"},
-		"grant_types_supported":                      []string{"authorization_code", "refresh_token"},
-		"token_endpoint_auth_methods_supported":      []string{"none"},
-		"revocation_endpoint_auth_methods_supported": []string{"none"},
-		"code_challenge_methods_supported":           []string{"S256"},
-		"client_id_metadata_document_supported":      s.cfg.Registration.ClientIDMetadataDocuments,
-		"subject_types_supported":                    []string{"public"},
-		"id_token_signing_alg_values_supported":      s.keys.Algorithms(),
+		"issuer":                                         iss,
+		"authorization_endpoint":                         iss + pathAuthorize,
+		"token_endpoint":                                 iss + pathToken,
+		"jwks_uri":                                       iss + pathJWKS,
+		"revocation_endpoint":                            iss + pathRevoke,
+		"scopes_supported":                               []string{ScopeMemory, oidc.ScopeOfflineAccess},
+		"response_types_supported":                       []string{"code"},
+		"response_modes_supported":                       []string{"query"},
+		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"token_endpoint_auth_methods_supported":          []string{"none"},
+		"revocation_endpoint_auth_methods_supported":     []string{"none"},
+		"code_challenge_methods_supported":               []string{"S256"},
+		"authorization_response_iss_parameter_supported": true,
+		"client_id_metadata_document_supported":          s.cfg.Registration.ClientIDMetadataDocuments,
+		"subject_types_supported":                        []string{"public"},
+		"id_token_signing_alg_values_supported":          s.keys.Algorithms(),
 	}
 	if s.cfg.Registration.Dynamic {
 		m["registration_endpoint"] = iss + pathRegister

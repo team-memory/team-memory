@@ -27,10 +27,16 @@ LIMIT @max_results::integer;
 -- name: SearchRows :many
 SELECT m.id, m.scope_id, s.path AS scope_path, s.depth AS scope_depth, m.kind, m.status, m.trust,
        m.current_revision, m.created_by, m.updated_at,
-       r.title, r.content, r.rationale, r.source_uri
+       r.title, r.content, r.rationale, r.source_uri,
+       ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+-- The approval behind trust=approved: latest outcome of the current revision.
+LEFT JOIN approvals ap ON m.trust = 'approved' AND ap.id = (
+    SELECT a.id FROM approvals a
+    WHERE a.memory_id = m.id AND a.revision = m.current_revision
+    ORDER BY a.decided_at DESC, a.id DESC LIMIT 1)
 WHERE m.id = ANY(@ids::uuid[]);
 
 -- name: EffectiveOverrides :many

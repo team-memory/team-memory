@@ -111,19 +111,23 @@ type Input struct {
 
 // Result is one ranked memory with provenance.
 type Result struct {
-	ID          uuid.UUID     `json:"id"`
-	Revision    int           `json:"revision"`
-	Kind        memory.Kind   `json:"kind"`
-	Status      memory.Status `json:"status"`
-	Trust       memory.Trust  `json:"trust"`
-	Title       string        `json:"title"`
-	Content     string        `json:"content"`
-	Rationale   string        `json:"rationale,omitempty"`
-	SourceURI   string        `json:"source_uri,omitempty"`
-	CreatedBy   uuid.UUID     `json:"created_by"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	OriginScope string        `json:"origin_scope"`
-	Inherited   bool          `json:"inherited"`
+	ID        uuid.UUID     `json:"id"`
+	Revision  int           `json:"revision"`
+	Kind      memory.Kind   `json:"kind"`
+	Status    memory.Status `json:"status"`
+	Trust     memory.Trust  `json:"trust"`
+	Title     string        `json:"title"`
+	Content   string        `json:"content"`
+	Rationale string        `json:"rationale,omitempty"`
+	SourceURI string        `json:"source_uri,omitempty"`
+	CreatedBy uuid.UUID     `json:"created_by"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	// ApprovedBy and ApprovedAt identify the maintainer review behind
+	// trust=approved; absent otherwise.
+	ApprovedBy  *uuid.UUID `json:"approved_by,omitempty"`
+	ApprovedAt  *time.Time `json:"approved_at,omitempty"`
+	OriginScope string     `json:"origin_scope"`
+	Inherited   bool       `json:"inherited"`
 	// Precedence is the origin scope's depth (0 = organization). It is scope
 	// context for ordering, not evidence of conflict or authority.
 	Precedence int `json:"precedence"`
@@ -314,7 +318,7 @@ func (s *Service) Search(ctx context.Context, p memory.Principal, in Input) (Res
 				ID: r.ID, Revision: int(r.CurrentRevision), Kind: memory.Kind(r.Kind), Status: memory.Status(r.Status),
 				Trust: memory.Trust(r.Trust), Title: r.Title, Content: r.Content, Rationale: r.Rationale,
 				SourceURI: deref(r.SourceUri), CreatedBy: r.CreatedBy, UpdatedAt: r.UpdatedAt,
-				OriginScope: r.ScopePath, Inherited: inherited[r.ScopeID], Precedence: int(r.ScopeDepth),
+				ApprovedBy: r.ReviewerID, ApprovedAt: r.ReviewedAt, OriginScope: r.ScopePath, Inherited: inherited[r.ScopeID], Precedence: int(r.ScopeDepth),
 				Score: round4(c.score), Retrievers: slices.Clone(c.retriever), OverriddenBy: overriddenBy[r.ID],
 			}
 			if c.vecRank > 0 {

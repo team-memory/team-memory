@@ -45,7 +45,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			env := newSSOEnv(t, c.edit)
-			tok, err := auth.NewPATs(env.tr.pool).Issue(context.Background(), env.tr.owner.ID, "ci", time.Hour)
+			tok, err := auth.NewPATs(env.tr.db.Admin).Issue(context.Background(), env.tr.owner.ID, "ci", time.Hour)
 			if err != nil {
 				t.Fatal(err)
 			}

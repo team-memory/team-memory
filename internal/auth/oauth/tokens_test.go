@@ -71,7 +71,7 @@ func validClaims(now time.Time) map[string]any {
 	return map[string]any{
 		"iss": testIssuer, "sub": "6f1c1a8e-2a55-4d63-9c55-8b1b1b0a0c11", "aud": []string{testResource},
 		"exp": now.Add(10 * time.Minute).Unix(), "iat": now.Unix(), "nbf": now.Unix(),
-		"scope": "memory", "client_id": "tmc_test",
+		"scope": "memory", "client_id": "tmc_test", "token_use": "access",
 	}
 }
 
@@ -118,6 +118,9 @@ func TestAccessTokenValidation(t *testing.T) {
 		"unsigned (alg none)":      unsigned(validClaims(now)),
 		"signature stripped":       strings.Join(strings.Split(sign(t, key, jose.ES256, "k1", validClaims(now)), ".")[:2], ".") + ".",
 		"upstream id token shaped": sign(t, other, jose.ES256, "upstream", map[string]any{"iss": "https://idp.example.com", "sub": "alice", "aud": "team-memory", "exp": now.Add(time.Hour).Unix()}),
+		// Our own ID token: same issuer, key and audience, but no token_use.
+		"team memory id token": sign(t, key, jose.ES256, "k1", mutate(func(c map[string]any) { delete(c, "token_use"); delete(c, "scope"); c["azp"] = "tmc_test" })),
+		"wrong token use":      sign(t, key, jose.ES256, "k1", mutate(func(c map[string]any) { c["token_use"] = "id" })),
 	}
 	for name, tok := range cases {
 		if _, err := v.claims(tok); !errors.Is(err, auth.ErrInvalidCredential) {
@@ -264,7 +267,10 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 
 func TestRefreshRotationAndReuse(t *testing.T) {
 	cfg := &Config{AccessTokenTTL: Duration(time.Minute), RefreshTokenTTL: Duration(time.Hour), Issuer: testIssuer}
-	s := newStore(cfg, nil, nil)
+	now := time.Now()
+	clock := func() time.Time { return now }
+	s := newStore(cfg, nil, nil, newMemState(clock))
+	s.now = clock
 	ctx := context.Background()
 	a := &authRequest{clientID: "c", subject: "p", resource: testResource, scopes: []string{"memory", "offline_access"}}
 	_, rt1, _, err := s.CreateAccessAndRefreshTokens(ctx, a, "")
@@ -279,7 +285,16 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 	if err != nil || rt2 == rt1 {
 		t.Fatalf("rotation: %v", err)
 	}
-	// Replaying rt1 fails and revokes the family, including rt2.
+	// Within the grace window a repeat of rt1 is a client race: it fails,
+	// but the family (rt2) survives.
+	if _, err := s.TokenRequestByRefreshToken(ctx, rt1); err == nil {
+		t.Fatal("rotated refresh token accepted")
+	}
+	if _, err := s.TokenRequestByRefreshToken(ctx, rt2); err != nil {
+		t.Fatalf("family revoked inside the grace window: %v", err)
+	}
+	// After the window, replaying rt1 is theft: the family is revoked.
+	now = now.Add(refreshGrace + time.Second)
 	if _, err := s.TokenRequestByRefreshToken(ctx, rt1); err == nil {
 		t.Fatal("rotated refresh token accepted")
 	}
@@ -289,7 +304,7 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 }
 
 func TestCreateAuthRequestRequiresPKCE(t *testing.T) {
-	s := newStore(&Config{Issuer: testIssuer}, nil, nil)
+	s := newStore(&Config{Issuer: testIssuer}, nil, nil, newMemState(time.Now))
 	ctx := context.Background()
 	for _, method := range []string{"", "plain"} {
 		r := &oidcAuthRequest{CodeChallenge: "x", CodeChallengeMethod: method}
@@ -346,11 +361,12 @@ func (r *oidcAuthRequest) req() *oidc.AuthRequest {
 func parseIP(s string) net.IP { return net.ParseIP(s) }
 
 // TestRefreshConcurrentReuse: two token requests that both looked a refresh
-// token up before either rotated it. Only one may rotate, and the other is
-// reuse, which ends the family, including the successor just issued.
+// token up before either rotated it. Only one may rotate. Inside the grace
+// window the loser fails without ending the family, so the client keeps the
+// session through the successor the winner received.
 func TestRefreshConcurrentReuse(t *testing.T) {
 	cfg := &Config{AccessTokenTTL: Duration(time.Minute), RefreshTokenTTL: Duration(time.Hour), Issuer: testIssuer}
-	s := newStore(cfg, nil, nil)
+	s := newStore(cfg, nil, nil, newMemState(time.Now))
 	ctx := context.Background()
 	a := &authRequest{clientID: "c", subject: "p", resource: testResource, scopes: []string{"memory", "offline_access"}}
 	_, rt1, _, err := s.CreateAccessAndRefreshTokens(ctx, a, "")
@@ -369,15 +385,15 @@ func TestRefreshConcurrentReuse(t *testing.T) {
 	if _, _, _, err := s.CreateAccessAndRefreshTokens(ctx, second, rt1); err == nil {
 		t.Fatal("refresh token rotated twice")
 	}
-	if _, err := s.TokenRequestByRefreshToken(ctx, rt2); err == nil {
-		t.Fatal("family survived concurrent refresh token reuse")
+	if _, err := s.TokenRequestByRefreshToken(ctx, rt2); err != nil {
+		t.Fatalf("a concurrent duplicate refresh ended the session: %v", err)
 	}
 }
 
 // TestAuthCodeSingleUse: a code resolves once, so concurrent redemptions
 // cannot both reach token issuance.
 func TestAuthCodeSingleUse(t *testing.T) {
-	s := newStore(&Config{Issuer: testIssuer}, nil, nil)
+	s := newStore(&Config{Issuer: testIssuer}, nil, nil, newMemState(time.Now))
 	ctx := context.Background()
 	r := &oidcAuthRequest{CodeChallenge: "x", CodeChallengeMethod: "S256"}
 	a, err := s.CreateAuthRequest(ctx, r.req(), "")
@@ -410,8 +426,11 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.clients.dcr["tmc_a"] = &client{id: "tmc_a", redirectURIs: []string{"http://127.0.0.1/cb"}, source: "dcr"}
-	s.clients.dcr["tmc_b"] = &client{id: "tmc_b", redirectURIs: []string{"http://127.0.0.1/cb"}, source: "dcr"}
+	for _, id := range []string{"tmc_a", "tmc_b"} {
+		if err := s.clients.state.putClient(context.Background(), &client{id: id, redirectURIs: []string{"http://127.0.0.1/cb"}, source: "dcr"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return s
 }
 
@@ -481,5 +500,22 @@ func TestMetadataClientRefusesLoopback(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "non-public address") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestAddIssuer: RFC 9207 iss is added to authorization responses (code or
+// error) that leave for a client, and nowhere else.
+func TestAddIssuer(t *testing.T) {
+	for loc, want := range map[string]string{
+		"http://127.0.0.1:1234/cb?code=abc&state=s":    "http://127.0.0.1:1234/cb?code=abc&iss=" + url.QueryEscape(testIssuer) + "&state=s",
+		"http://127.0.0.1:1234/cb?error=access_denied": "http://127.0.0.1:1234/cb?error=access_denied&iss=" + url.QueryEscape(testIssuer),
+		"http://127.0.0.1:1234/cb?state=s":             "http://127.0.0.1:1234/cb?state=s",
+		testIssuer + "/oauth/login?authRequestID=x":    testIssuer + "/oauth/login?authRequestID=x",
+		// The redirect to the upstream provider is a request, not a response.
+		"https://idp.example.com/auth?response_type=code&state=u": "https://idp.example.com/auth?response_type=code&state=u",
+	} {
+		if got := addIssuer(loc, testIssuer); got != want {
+			t.Errorf("addIssuer(%q) = %q, want %q", loc, got, want)
+		}
 	}
 }

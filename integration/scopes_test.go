@@ -242,48 +242,48 @@ func TestTreeRules(t *testing.T) {
 	var ve *memory.ValidationError
 
 	// Default max depth is 5 levels: acme/platform/payments is level 3.
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme/platform/payments", "project", "api", ""); err != nil {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme/platform/payments", "project", "api", ""); err != nil {
 		t.Fatalf("level 4: %v", err)
 	}
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme/platform/payments/api", "project", "v2", ""); err != nil {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme/platform/payments/api", "project", "v2", ""); err != nil {
 		t.Fatalf("level 5: %v", err)
 	}
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme/platform/payments/api/v2", "project", "too-deep", ""); !errors.As(err, &ve) {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme/platform/payments/api/v2", "project", "too-deep", ""); !errors.As(err, &ve) {
 		t.Fatalf("level 6 should be rejected: %v", err)
 	}
 
 	// Levels must be in the organization's allowed set until configured.
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme", "division", "emea", ""); !errors.As(err, &ve) {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme", "division", "emea", ""); !errors.As(err, &ve) {
 		t.Fatalf("unknown level: %v", err)
 	}
-	if _, err := tr.svc.ConfigureOrg(ctx, "acme", []string{"organization", "division", "team", "project"}, 6); err != nil {
+	if _, err := tr.admin.ConfigureOrg(ctx, "acme", []string{"organization", "division", "team", "project"}, 6); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme", "division", "emea", ""); err != nil {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme", "division", "emea", ""); err != nil {
 		t.Fatalf("admin-defined level: %v", err)
 	}
-	if _, err := tr.svc.ConfigureOrg(ctx, "acme", []string{"organization", "team", "project"}, 6); !errors.As(err, &ve) {
+	if _, err := tr.admin.ConfigureOrg(ctx, "acme", []string{"organization", "team", "project"}, 6); !errors.As(err, &ve) {
 		t.Fatalf("removing a used level should fail: %v", err)
 	}
-	if _, err := tr.svc.ConfigureOrg(ctx, "acme", []string{"organization", "division", "team", "project"}, 3); !errors.As(err, &ve) {
+	if _, err := tr.admin.ConfigureOrg(ctx, "acme", []string{"organization", "division", "team", "project"}, 3); !errors.As(err, &ve) {
 		t.Fatalf("lowering max depth below existing scopes should fail: %v", err)
 	}
 
 	// Single parent and no moves: the parent cannot be changed after creation.
-	if _, err := tr.pool.Exec(ctx, "UPDATE scopes SET parent_id = $1 WHERE id = $2", tr.org.ID, tr.payments.ID); err == nil {
+	if _, err := tr.db.Admin.Exec(ctx, "UPDATE scopes SET parent_id = $1 WHERE id = $2", tr.org.ID, tr.payments.ID); err == nil {
 		t.Fatal("moving a scope should be rejected")
 	}
 	// Only the organization root may lack a parent, and a root is its own org.
-	if _, err := tr.pool.Exec(ctx, `INSERT INTO scopes (org_id, parent_id, level, slug, name, depth, path)
+	if _, err := tr.db.Admin.Exec(ctx, `INSERT INTO scopes (org_id, parent_id, level, slug, name, depth, path)
 		VALUES ($1, NULL, 'team', 'orphan', 'orphan', 1, 'acme/orphan')`, tr.org.ID); err == nil {
 		t.Fatal("parentless non-root scope should be rejected")
 	}
 	// Duplicate slug under the same parent.
-	if _, err := tr.svc.CreateScope(ctx, uuid.Nil, "acme", "team", "platform", ""); !errors.As(err, &ve) {
+	if _, err := tr.admin.CreateScope(ctx, uuid.Nil, "acme", "team", "platform", ""); !errors.As(err, &ve) {
 		t.Fatalf("duplicate slug: %v", err)
 	}
 	// Scopes cannot be deleted.
-	if _, err := tr.pool.Exec(ctx, "DELETE FROM scopes WHERE id = $1", tr.billing.ID); err == nil {
+	if _, err := tr.db.Admin.Exec(ctx, "DELETE FROM scopes WHERE id = $1", tr.billing.ID); err == nil {
 		t.Fatal("deleting a scope should be rejected")
 	}
 }

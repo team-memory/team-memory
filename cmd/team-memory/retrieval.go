@@ -15,6 +15,7 @@ import (
 
 	"github.com/team-memory/team-memory/internal/embeddings"
 	"github.com/team-memory/team-memory/internal/jobs"
+	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
 	"github.com/team-memory/team-memory/internal/search"
 )
@@ -183,7 +184,7 @@ func workerCmd(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	return withPool(ctx, func(pool *pgxpool.Pool) error {
+	return withRuntimePool(ctx, "TEAM_MEMORY_WORKER_DATABASE_URL", postgres.RoleWorker, nil, func(pool *pgxpool.Pool) error {
 		ix, err := embeddings.NewIndexer(ctx, pool, p)
 		if err != nil {
 			return err

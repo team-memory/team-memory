@@ -83,6 +83,10 @@ type Provider struct {
 	// AutoProvision creates a principal, without roles, on the first login
 	// of an unknown identity. Default true.
 	AutoProvision *bool `json:"auto_provision"`
+	// SyncGroupRoles applies the operator-managed idp_group_mappings for
+	// this issuer at every sign-in (team-memory idp-groups). Off by
+	// default: roles are then managed only in the database.
+	SyncGroupRoles bool `json:"sync_group_roles"`
 }
 
 func (p Provider) autoProvision() bool { return p.AutoProvision == nil || *p.AutoProvision }

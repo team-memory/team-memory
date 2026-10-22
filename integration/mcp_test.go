@@ -37,7 +37,7 @@ type mcpEnv struct {
 func newMCPEnv(t *testing.T) *mcpEnv {
 	t.Helper()
 	tr := newTree(t)
-	tok, err := auth.NewPATs(tr.pool).Issue(context.Background(), tr.owner.ID, "test", 0)
+	tok, err := auth.NewPATs(tr.db.Admin).Issue(context.Background(), tr.owner.ID, "test", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,9 +163,17 @@ func TestMCPProtocol(t *testing.T) {
 				t.Fatalf("get: %v", got)
 			}
 
+			// memory_approve requests review; it never approves.
 			approve, isErr := call(t, cs, "memory_approve", map[string]any{"id": id, "revision": 2})
-			if e, _ := approve["error"].(map[string]any); !isErr || e["code"] != "not_implemented" {
+			if isErr || approve["review_requested"] != true || approve["approved"] != false || approve["trust"] != "cited" {
 				t.Fatalf("approve: %v", approve)
+			}
+			again, isErr := call(t, cs, "memory_approve", map[string]any{"id": id, "revision": 2})
+			if isErr || again["review_requested"] != false || again["already_requested"] != true {
+				t.Fatalf("repeated approve is not idempotent: %v", again)
+			}
+			if got, _ := call(t, cs, "memory_get", map[string]any{"id": id}); got["trust"] != "cited" {
+				t.Fatalf("memory_approve changed trust: %v", got)
 			}
 
 			recent, isErr := call(t, cs, "memory_recent", map[string]any{"scope": scope})
@@ -233,7 +241,7 @@ func TestMCPRequiresAuthentication(t *testing.T) {
 	}
 
 	// A revoked token stops working immediately.
-	pats := auth.NewPATs(env.tr.pool)
+	pats := auth.NewPATs(env.tr.db.Admin)
 	tok, err := pats.Issue(context.Background(), env.tr.owner.ID, "revoke-me", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +263,7 @@ func TestMCPRespectsScopes(t *testing.T) {
 	ctx := context.Background()
 	env.tr.create(t, env.tr.owner, "acme/platform/billing", "fact", "billing secret plan", "billing only")
 	reader := env.tr.member(t, "Payments reader", "acme/platform/payments", memory.RoleReader, false)
-	tok, err := auth.NewPATs(env.tr.pool).Issue(ctx, reader.ID, "reader", 0)
+	tok, err := auth.NewPATs(env.tr.db.Admin).Issue(ctx, reader.ID, "reader", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

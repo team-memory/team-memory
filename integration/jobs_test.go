@@ -32,7 +32,7 @@ func embedJob(t *testing.T, tr *tree, id uuid.UUID, rev int) (jobRow, bool) {
 	t.Helper()
 	var j jobRow
 	var lastErr *string
-	err := tr.pool.QueryRow(context.Background(),
+	err := tr.db.Admin.QueryRow(context.Background(),
 		`SELECT status, attempts, last_error, run_after FROM jobs WHERE dedupe_key = $1`,
 		embeddings.KeyPrefix("nomic-embed-text")+id.String()+":"+strconv.Itoa(rev)).Scan(&j.status, &j.attempts, &lastErr, &j.runAfter)
 	if err != nil {
@@ -52,7 +52,7 @@ func vectorOf(dims int) pgvector.Vector {
 
 func embeddingRevisions(t *testing.T, tr *tree, id uuid.UUID) []int {
 	t.Helper()
-	rows, err := tr.pool.Query(context.Background(),
+	rows, err := tr.db.Admin.Query(context.Background(),
 		`SELECT revision FROM memory_embeddings WHERE memory_id = $1 ORDER BY revision`, id)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func embeddingRevisions(t *testing.T, tr *tree, id uuid.UUID) []int {
 // makeReady lets retried jobs run now instead of after their backoff.
 func makeReady(t *testing.T, tr *tree) {
 	t.Helper()
-	if _, err := tr.pool.Exec(context.Background(), `UPDATE jobs SET run_after = now() WHERE status = 'pending'`); err != nil {
+	if _, err := tr.db.Admin.Exec(context.Background(), `UPDATE jobs SET run_after = now() WHERE status = 'pending'`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -88,7 +88,7 @@ func TestRevisionsEnqueueEmbeddingJobs(t *testing.T) {
 		t.Fatal("invalid create succeeded")
 	}
 	var total int
-	_ = tr.pool.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&total)
+	_ = tr.db.Admin.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&total)
 	if total != 1 {
 		t.Fatalf("jobs after failed create: %d", total)
 	}
@@ -128,7 +128,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
 	m := tr.create(t, tr.owner, "acme/platform/payments", "decision", "Ledger store", "payments ledger lives in PostgreSQL")
-	if _, err := tr.pool.Exec(ctx, `UPDATE jobs SET max_attempts = 3`); err != nil {
+	if _, err := tr.db.Admin.Exec(ctx, `UPDATE jobs SET max_attempts = 3`); err != nil {
 		t.Fatal(err)
 	}
 	tr.embedder.SetFailure(errors.New("connection refused"))
@@ -167,7 +167,7 @@ func TestWorkerRetriesThenDeadLetters(t *testing.T) {
 
 	// Recovery: requeue dead jobs once the provider is back.
 	tr.embedder.SetFailure(nil)
-	if n, err := db.New(tr.pool).RetryDeadJobs(ctx, embeddings.JobKind); err != nil || n != 1 {
+	if n, err := db.New(tr.db.Admin).RetryDeadJobs(ctx, embeddings.JobKind); err != nil || n != 1 {
 		t.Fatalf("retry dead: %d %v", n, err)
 	}
 	tr.drain(t)
@@ -192,10 +192,10 @@ func TestOllamaStoppedDeadLettersAndSearchFallsBack(t *testing.T) {
 	}
 	srv.Close() // Ollama is down
 	m := tr.create(t, tr.owner, "acme/platform/payments", "fact", "Refund window", "refunds are accepted for 30 days")
-	if _, err := tr.pool.Exec(ctx, `UPDATE jobs SET max_attempts = 2`); err != nil {
+	if _, err := tr.db.Admin.Exec(ctx, `UPDATE jobs SET max_attempts = 2`); err != nil {
 		t.Fatal(err)
 	}
-	ix, err := embeddings.NewIndexer(ctx, tr.pool, ollama)
+	ix, err := embeddings.NewIndexer(ctx, tr.db.Worker, ollama)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,14 +251,14 @@ func TestDimensionMismatchIsPermanent(t *testing.T) {
 		t.Fatalf("mismatch should dead-letter on the first attempt: %+v", j)
 	}
 	// Startup checks refuse a model registered with other dimensions.
-	if _, err := embeddings.NewIndexer(ctx, tr.pool, embeddings.NewFake("nomic-embed-text", 1024)); !errors.Is(err, embeddings.ErrDimensionMismatch) {
+	if _, err := embeddings.NewIndexer(ctx, tr.db.Worker, embeddings.NewFake("nomic-embed-text", 1024)); !errors.Is(err, embeddings.ErrDimensionMismatch) {
 		t.Fatalf("indexer with wrong dimensions: %v", err)
 	}
-	if _, err := embeddings.NewIndexer(ctx, tr.pool, embeddings.NewFake("unregistered", 8)); err == nil {
+	if _, err := embeddings.NewIndexer(ctx, tr.db.Worker, embeddings.NewFake("unregistered", 8)); err == nil {
 		t.Fatal("indexer for an unregistered model started")
 	}
 	// The database rejects vectors whose length disagrees with the registry.
-	_, err := db.New(tr.pool).InsertEmbedding(ctx, db.InsertEmbeddingParams{MemoryID: m.ID, Revision: 1, OrgID: tr.org.ID,
+	_, err := db.New(tr.db.Admin).InsertEmbedding(ctx, db.InsertEmbeddingParams{MemoryID: m.ID, Revision: 1, OrgID: tr.org.ID,
 		ScopeID: tr.payments.ID, Model: "nomic-embed-text", Dimensions: 768, Embedding: vectorOf(1024)})
 	if err == nil {
 		t.Fatal("stored a 1024-dimension vector for a 768-dimension model")
@@ -269,7 +269,7 @@ func TestEmbeddingIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
 	m := tr.create(t, tr.owner, "acme/platform/payments", "fact", "Refund window", "refunds are accepted for 30 days")
-	q := db.New(tr.pool)
+	q := db.New(tr.db.Admin)
 	// Enqueueing the same revision again is a no-op.
 	if err := q.EnqueueEmbedJobs(ctx, db.EnqueueEmbedJobsParams{OrgID: tr.org.ID, MemoryID: m.ID, Revision: 1}); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestEmbeddingIsIdempotent(t *testing.T) {
 		t.Fatalf("backfill duplicated %d jobs", n)
 	}
 	var count int
-	_ = tr.pool.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&count)
+	_ = tr.db.Admin.QueryRow(ctx, `SELECT count(*) FROM jobs`).Scan(&count)
 	if count != 1 {
 		t.Fatalf("jobs: %d", count)
 	}
@@ -320,7 +320,7 @@ func TestBackfillCoversMemoriesWithoutJobs(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
 	// Memories written while no model is enabled get no jobs.
-	if _, err := tr.pool.Exec(ctx, `UPDATE embedding_models SET enabled = false`); err != nil {
+	if _, err := tr.db.Admin.Exec(ctx, `UPDATE embedding_models SET enabled = false`); err != nil {
 		t.Fatal(err)
 	}
 	m := tr.create(t, tr.owner, "acme/platform/payments", "fact", "Refund window", "refunds are accepted for 30 days")
@@ -328,13 +328,13 @@ func TestBackfillCoversMemoriesWithoutJobs(t *testing.T) {
 		t.Fatal("job enqueued for a disabled model")
 	}
 	// A disabled model is neither served, backfilled nor indexed.
-	if _, err := embeddings.NewIndexer(ctx, tr.pool, tr.embedder); err == nil {
+	if _, err := embeddings.NewIndexer(ctx, tr.db.Worker, tr.embedder); err == nil {
 		t.Fatal("indexer started for a disabled model")
 	}
-	if n, _ := db.New(tr.pool).BackfillEmbedJobs(ctx, "nomic-embed-text"); n != 0 {
+	if n, _ := db.New(tr.db.Admin).BackfillEmbedJobs(ctx, "nomic-embed-text"); n != 0 {
 		t.Fatalf("backfill enqueued %d jobs for a disabled model", n)
 	}
-	if _, err := tr.pool.Exec(ctx, `UPDATE embedding_models SET enabled = true`); err != nil {
+	if _, err := tr.db.Admin.Exec(ctx, `UPDATE embedding_models SET enabled = true`); err != nil {
 		t.Fatal(err)
 	}
 	n, err := tr.indexer(t).Backfill(ctx)
@@ -351,7 +351,7 @@ func TestExpiredLeaseIsReleased(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
 	m := tr.create(t, tr.owner, "acme/platform/payments", "fact", "Refund window", "refunds are accepted for 30 days")
-	q := db.New(tr.pool)
+	q := db.New(tr.db.Admin)
 	claim := func(worker string) []db.ClaimJobsRow {
 		t.Helper()
 		rows, err := q.ClaimJobs(ctx, db.ClaimJobsParams{Worker: worker, Kind: "embed", MaxJobs: 10})
@@ -362,7 +362,7 @@ func TestExpiredLeaseIsReleased(t *testing.T) {
 	}
 	expire := func() {
 		t.Helper()
-		if _, err := tr.pool.Exec(ctx, `UPDATE jobs SET locked_at = now() - interval '2 minutes'`); err != nil {
+		if _, err := tr.db.Admin.Exec(ctx, `UPDATE jobs SET locked_at = now() - interval '2 minutes'`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -428,17 +428,17 @@ func TestModelsClaimOnlyTheirOwnJobs(t *testing.T) {
 	ctx := context.Background()
 	tr := newTree(t)
 	other := embeddings.NewFake("nomic-embed-text:v1.5", 768)
-	if err := embeddings.AddModel(ctx, tr.pool, other.Model(), false); err != nil {
+	if err := embeddings.AddModel(ctx, tr.db.Admin, other.Model(), false); err != nil {
 		t.Fatal(err)
 	}
 	m := tr.create(t, tr.owner, "acme/platform/payments", "fact", "Refund window", "refunds are accepted for 30 days")
 	tr.drain(t) // the default model's worker
 	var otherStatus string
 	key := embeddings.KeyPrefix("nomic-embed-text:v1.5") + m.ID.String() + ":1"
-	if err := tr.pool.QueryRow(ctx, `SELECT status FROM jobs WHERE dedupe_key = $1`, key).Scan(&otherStatus); err != nil || otherStatus != "pending" {
+	if err := tr.db.Admin.QueryRow(ctx, `SELECT status FROM jobs WHERE dedupe_key = $1`, key).Scan(&otherStatus); err != nil || otherStatus != "pending" {
 		t.Fatalf("other model's job after the default worker ran: %q %v", otherStatus, err)
 	}
-	ix, err := embeddings.NewIndexer(ctx, tr.pool, other)
+	ix, err := embeddings.NewIndexer(ctx, tr.db.Worker, other)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestModelsClaimOnlyTheirOwnJobs(t *testing.T) {
 		t.Fatalf("v1.5 worker: %d %v", n, err)
 	}
 	var models []string
-	rows, _ := tr.pool.Query(ctx, `SELECT model FROM memory_embeddings WHERE memory_id = $1 ORDER BY model`, m.ID)
+	rows, _ := tr.db.Admin.Query(ctx, `SELECT model FROM memory_embeddings WHERE memory_id = $1 ORDER BY model`, m.ID)
 	for rows.Next() {
 		var s string
 		_ = rows.Scan(&s)
@@ -458,7 +458,7 @@ func TestModelsClaimOnlyTheirOwnJobs(t *testing.T) {
 	}
 	// Distinct indexes, both valid, were built for the two spaces.
 	var n int
-	_ = tr.pool.QueryRow(ctx, `SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+	_ = tr.db.Admin.QueryRow(ctx, `SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
 		WHERE c.relname IN ($1, $2) AND i.indisvalid`, embeddings.Model{Name: "nomic-embed-text"}.IndexName(), other.Model().IndexName()).Scan(&n)
 	if n != 2 {
 		t.Fatalf("valid per-model indexes: %d", n)
@@ -520,7 +520,7 @@ func TestConcurrentWorkersClaimEachJobOnce(t *testing.T) {
 	}
 	wg.Wait()
 	var succeeded, attempts int
-	_ = tr.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status = 'succeeded'), sum(attempts) FROM jobs`).Scan(&succeeded, &attempts)
+	_ = tr.db.Admin.QueryRow(ctx, `SELECT count(*) FILTER (WHERE status = 'succeeded'), sum(attempts) FROM jobs`).Scan(&succeeded, &attempts)
 	if succeeded != 40 || attempts != 40 {
 		t.Fatalf("succeeded %d, attempts %d; want 40 and 40", succeeded, attempts)
 	}

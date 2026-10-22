@@ -2,10 +2,11 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,7 @@ import (
 	"github.com/team-memory/team-memory/internal/memory"
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
+	"github.com/team-memory/team-memory/internal/ratelimit"
 )
 
 var (
@@ -35,6 +37,10 @@ type ExternalIdentity struct {
 	Subject string
 	Email   string
 	Name    string
+	// Groups is the provider's groups claim, used only for optional group
+	// to role mapping. AuthTime is the upstream authentication time.
+	Groups   []string
+	AuthTime time.Time
 }
 
 func (e ExternalIdentity) valid() error {
@@ -86,6 +92,11 @@ func (s *Identities) Resolve(ctx context.Context, id ExternalIdentity, provision
 		if _, err := tx.Q.InsertPrincipalIdentity(ctx, db.InsertPrincipalIdentityParams{PrincipalID: p.ID, Issuer: id.Issuer, Subject: id.Subject}); err != nil {
 			return err
 		}
+		// The audit row's actor is the new principal; RLS accepts an actor
+		// only when it is the transaction's principal.
+		if err := actAs(ctx, tx, p.ID); err != nil {
+			return err
+		}
 		if err := auditIdentity(ctx, tx.Q, p.ID, "auth.principal_provisioned", id); err != nil {
 			return err
 		}
@@ -130,8 +141,72 @@ func (s *Identities) Link(ctx context.Context, principal uuid.UUID, id ExternalI
 		if _, err := tx.Q.InsertPrincipalIdentity(ctx, db.InsertPrincipalIdentityParams{PrincipalID: principal, Issuer: id.Issuer, Subject: id.Subject}); err != nil {
 			return err
 		}
+		if err := actAs(ctx, tx, principal); err != nil {
+			return err
+		}
 		return auditIdentity(ctx, tx.Q, principal, "auth.identity_linked", id)
 	})
+}
+
+// Unlink removes an identity from a principal (operator recovery). It
+// never moves the identity elsewhere; the next sign-in with it provisions a
+// new principal or is refused, per the provider's auto_provision setting.
+func (s *Identities) Unlink(ctx context.Context, principal uuid.UUID, id ExternalIdentity) error {
+	if err := id.valid(); err != nil {
+		return err
+	}
+	return postgres.WithTx(ctx, s.pool, uuid.Nil, func(tx postgres.Tx) error {
+		n, err := tx.Q.DeletePrincipalIdentity(ctx, db.DeletePrincipalIdentityParams{PrincipalID: principal, Issuer: id.Issuer, Subject: id.Subject})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("identity is not linked to principal %s", principal)
+		}
+		return memory.InsertAudit(ctx, tx.Q, memory.AuditEvent{Action: "auth.identity_unlinked", TargetType: "principal",
+			TargetID: principal.String(), Details: map[string]any{"issuer": id.Issuer, "subject": id.Subject, "via": "cli"}})
+	})
+}
+
+// SyncGroupRoles applies the operator-managed IdP group mappings for the
+// identity's issuer to the principal: grants marked source=idp are added,
+// changed or removed to match the groups in this sign-in. Manual grants are
+// never touched. Runs as the principal through a definer function that
+// reads only operator-managed mappings.
+func (s *Identities) SyncGroupRoles(ctx context.Context, principal uuid.UUID, id ExternalIdentity) error {
+	return postgres.WithTx(ctx, s.pool, principal, func(tx postgres.Tx) error {
+		groups := id.Groups
+		if groups == nil {
+			groups = []string{}
+		}
+		if err := tx.Q.SyncIdPGrants(ctx, db.SyncIdPGrantsParams{PrincipalID: principal, Issuer: id.Issuer, Groups: groups}); err != nil {
+			return err
+		}
+		return memory.InsertAudit(ctx, tx.Q, memory.AuditEvent{ActorID: &principal, Action: "auth.group_roles_synced",
+			TargetType: "principal", TargetID: principal.String(), Details: map[string]any{"issuer": id.Issuer, "groups": len(groups)}})
+	})
+}
+
+// ErrStaleLogin means a linking login is older than LinkMaxAge.
+var ErrStaleLogin = errors.New("the identity provider login is not recent; sign in again to link")
+
+// LinkMaxAge bounds how old the upstream authentication may be when an
+// identity is linked from the portal.
+const LinkMaxAge = 5 * time.Minute
+
+// LinkFromPortal is the authorization for "Connect SSO" (stage 05 supplies
+// the browser flow): the actor must be in an authenticated portal session,
+// and the identity must come from a fresh upstream login started for
+// linking (prompt=login), so both identities are proven now. Ownership is
+// never changed; Link enforces the data rules.
+func (s *Identities) LinkFromPortal(ctx context.Context, actor memory.Principal, id ExternalIdentity, now time.Time) error {
+	if actor.AuthMethod != memory.AuthPortal {
+		return memory.ErrBrowserReviewRequired
+	}
+	if id.AuthTime.IsZero() || now.Sub(id.AuthTime) > LinkMaxAge || id.AuthTime.After(now.Add(time.Minute)) {
+		return ErrStaleLogin
+	}
+	return s.Link(ctx, actor.ID, id)
 }
 
 // Principal loads an enabled principal by id, for bearer tokens that carry
@@ -173,15 +248,81 @@ func displayName(id ExternalIdentity) string {
 	return name
 }
 
+// actAs switches the transaction's request identity to principal, for
+// writes attributed to a principal that was just created or verified.
+func actAs(ctx context.Context, tx postgres.Tx, principal uuid.UUID) error {
+	_, err := tx.Exec(ctx, "SELECT set_config('app.principal_id', $1, true)", principal.String())
+	return err
+}
+
 func auditIdentity(ctx context.Context, q *db.Queries, principal uuid.UUID, action string, id ExternalIdentity) error {
 	// Issuer and subject identify the identity; email and name stay out of
 	// the audit log.
-	details, err := json.Marshal(map[string]string{"issuer": id.Issuer, "subject": id.Subject})
-	if err != nil {
-		return err
+	return memory.InsertAudit(ctx, q, memory.AuditEvent{ActorID: &principal, Action: action, TargetType: "principal",
+		TargetID: principal.String(), Details: map[string]any{"issuer": id.Issuer, "subject": id.Subject}})
+}
+
+// FailureAuditor records rejected credentials in the audit log without the
+// credential itself. Writes are rate-limited per client address, so a flood
+// of bad tokens cannot turn into an unbounded stream of database writes;
+// suppressed failures are only counted in the log.
+type FailureAuditor struct {
+	pool    *pgxpool.Pool
+	limiter *ratelimit.Limiter
+	logger  *slog.Logger
+}
+
+// NewFailureAuditor audits at most one failure per second per client
+// address, with a burst of 20.
+func NewFailureAuditor(pool *pgxpool.Pool, logger *slog.Logger) *FailureAuditor {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
 	}
-	return q.InsertAuditEvent(ctx, db.InsertAuditEventParams{
-		ActorID: &principal, Action: action, TargetType: "principal",
-		TargetID: principal.String(), Outcome: "success", Details: details,
+	return &FailureAuditor{pool: pool, limiter: ratelimit.New(1, 20), logger: logger}
+}
+
+type clientAddrKey struct{}
+
+// WithClientAddr attaches the client address used to rate-limit audits.
+func WithClientAddr(ctx context.Context, addr string) context.Context {
+	return context.WithValue(ctx, clientAddrKey{}, addr)
+}
+
+// ClientAddr returns the address attached by WithClientAddr.
+func ClientAddr(ctx context.Context) string {
+	a, _ := ctx.Value(clientAddrKey{}).(string)
+	return a
+}
+
+// Record writes an auth.failure audit event. kind is the credential type
+// ("pat", "jwt", "upstream"); reason is a fixed code.
+func (a *FailureAuditor) Record(ctx context.Context, kind, reason string) {
+	addr := ClientAddr(ctx)
+	if ok, _ := a.limiter.Allow(addr); !ok {
+		a.logger.Warn("authentication failure (audit suppressed by rate limit)", "kind", kind, "reason", reason)
+		return
+	}
+	err := postgres.WithTx(context.WithoutCancel(ctx), a.pool, uuid.Nil, func(tx postgres.Tx) error {
+		return memory.InsertAudit(ctx, tx.Q, memory.AuditEvent{Action: "auth.failure", TargetType: "credential",
+			TargetID: kind, Outcome: "denied", Details: map[string]any{"reason": reason, "client": addr}})
 	})
+	if err != nil {
+		a.logger.Error("audit authentication failure", "err", err)
+	}
+}
+
+// RecordSignIn writes an auth.sign_in audit event for a completed upstream
+// login (outcome success) or a refused one (denied, principal unknown).
+func (a *FailureAuditor) RecordSignIn(ctx context.Context, principal uuid.UUID, issuer, reason string) {
+	outcome, actor := "success", &principal
+	if principal == uuid.Nil {
+		outcome, actor = "denied", nil
+	}
+	err := postgres.WithTx(context.WithoutCancel(ctx), a.pool, principal, func(tx postgres.Tx) error {
+		return memory.InsertAudit(ctx, tx.Q, memory.AuditEvent{ActorID: actor, Action: "auth.sign_in", TargetType: "identity_provider",
+			TargetID: issuer, Outcome: outcome, Details: map[string]any{"reason": reason, "client": ClientAddr(ctx)}})
+	})
+	if err != nil {
+		a.logger.Error("audit sign-in", "err", err)
+	}
 }

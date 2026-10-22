@@ -11,6 +11,7 @@ import (
 
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
+	"github.com/team-memory/team-memory/internal/secrets"
 )
 
 // CreateInput describes a new memory.
@@ -23,8 +24,8 @@ type CreateInput struct {
 	SourceURI  string
 	ChangeNote string
 	// Overrides lists inherited memories this one proposes to override. Links
-	// are recorded in the revision; they have no effect until approval-gated
-	// behaviour lands in stage 04, and never hide inherited guidance before then.
+	// are part of the revision; they take effect only when a maintainer
+	// approves that exact revision, and never hide inherited guidance before.
 	Overrides []uuid.UUID
 }
 
@@ -67,6 +68,8 @@ func jsonBytes(v any) ([]byte, error) {
 	}
 	return json.Marshal(v)
 }
+
+func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
 
 func trustFor(sourceURI string) Trust {
 	if sourceURI != "" {
@@ -111,6 +114,20 @@ func (c *content) validate() error {
 	}
 	slices.SortFunc(c.overrides, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
 	c.overrides = slices.Compact(c.overrides)
+	return c.scan()
+}
+
+// scan rejects content that looks like it contains a credential. Shared
+// memory reaches every reader of the scope and its descendants, and later
+// the git mirror, so a leaked secret spreads; rejecting at write time is
+// the cheapest place to stop it.
+func (c *content) scan() error {
+	if f := secrets.Scan(map[string]string{
+		"title": c.title, "content": c.content, "rationale": c.rationale,
+		"source_uri": c.sourceURI, "change_note": c.changeNote,
+	}); len(f) > 0 {
+		return &SecretError{Findings: f}
+	}
 	return nil
 }
 
@@ -217,7 +234,7 @@ func insertRevision(ctx context.Context, tx postgres.Tx, m db.Memory, rev int32,
 	}
 	for _, o := range c.overrides {
 		if err := tx.Q.InsertRevisionOverride(ctx, db.InsertRevisionOverrideParams{
-			MemoryID: m.ID, Revision: rev, OrgID: m.OrgID, OverriddenMemoryID: o,
+			MemoryID: m.ID, Revision: rev, OrgID: m.OrgID, ScopeID: m.ScopeID, OverriddenMemoryID: o,
 		}); err != nil {
 			return mapDBError(err)
 		}
@@ -259,7 +276,7 @@ func (s *Service) Create(ctx context.Context, p Principal, in CreateInput) (Memo
 	}
 	var id uuid.UUID
 	var scopeID uuid.UUID
-	err = postgres.WithTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err = postgres.WithActorTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		sc, err := resolveScope(ctx, tx.Q, in.Scope)
 		if err != nil {
 			return err
@@ -275,6 +292,7 @@ func (s *Service) Create(ctx context.Context, p Principal, in CreateInput) (Memo
 		return err
 	})
 	if err != nil {
+		s.auditDenial(ctx, p, "memory.create", "scope", in.Scope, err)
 		return Memory{}, err
 	}
 	return s.getAs(ctx, p, id, scopeID)
@@ -341,12 +359,14 @@ func checkWorkingScope(ctx context.Context, q *db.Queries, p Principal, owner uu
 
 // Update appends a new immutable revision. ExpectedRevision must match the
 // current revision; otherwise a *ConflictError is returned. A new revision
-// resets trust, because approval is bound to an exact revision.
+// resets trust, because approval is bound to an exact revision: an approved
+// memory becomes cited or unverified until its new revision is approved,
+// and any override it carries stops taking effect until then.
 func (s *Service) Update(ctx context.Context, p Principal, in UpdateInput) (Memory, error) {
 	if in.ExpectedRevision < 1 {
 		return Memory{}, invalidf("expected_revision is required")
 	}
-	err := postgres.WithTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		m, err := lockForChange(ctx, tx, p, in.ID, in.Scope, RoleWriter)
 		if err != nil {
 			return err
@@ -410,13 +430,15 @@ func (s *Service) Update(ctx context.Context, p Principal, in UpdateInput) (Memo
 			map[string]any{"revision": next})
 	})
 	if err != nil {
+		s.auditDenial(ctx, p, "memory.update", "memory", in.ID.String(), err)
 		return Memory{}, err
 	}
 	return s.Get(ctx, p, in.ID, in.Scope)
 }
 
 // Supersede creates a replacement memory in the same scope and marks the
-// original superseded, linking the two. Requires writer on the owning scope.
+// original superseded, linking the two. Requires maintainer on the owning
+// scope: superseding retires guidance other people rely on.
 func (s *Service) Supersede(ctx context.Context, p Principal, in SupersedeInput) (old, replacement Memory, err error) {
 	if in.ExpectedRevision < 1 {
 		return Memory{}, Memory{}, invalidf("expected_revision is required")
@@ -429,8 +451,8 @@ func (s *Service) Supersede(ctx context.Context, p Principal, in SupersedeInput)
 		reason = "replaced"
 	}
 	var newID uuid.UUID
-	err = postgres.WithTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
-		m, err := lockForChange(ctx, tx, p, in.ID, in.Scope, RoleWriter)
+	err = postgres.WithActorTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
+		m, err := lockForChange(ctx, tx, p, in.ID, in.Scope, RoleMaintainer)
 		if err != nil {
 			return err
 		}
@@ -473,6 +495,7 @@ func (s *Service) Supersede(ctx context.Context, p Principal, in SupersedeInput)
 			map[string]any{"replacement": repl.ID})
 	})
 	if err != nil {
+		s.auditDenial(ctx, p, "memory.supersede", "memory", in.ID.String(), err)
 		return Memory{}, Memory{}, err
 	}
 	if old, err = s.Get(ctx, p, in.ID, ""); err != nil {
@@ -491,7 +514,7 @@ func (s *Service) Archive(ctx context.Context, p Principal, in ArchiveInput) (Me
 	if err := checkText("reason", in.Reason, 0, MaxChangeNoteLen); err != nil {
 		return Memory{}, err
 	}
-	err := postgres.WithTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		m, err := lockForChange(ctx, tx, p, in.ID, "", RoleMaintainer)
 		if err != nil {
 			return err
@@ -512,16 +535,10 @@ func (s *Service) Archive(ctx context.Context, p Principal, in ArchiveInput) (Me
 		return audit(ctx, tx, m.OrgID, p.ID, "memory.archive", "memory", m.ID.String(), &m.ScopeID, nil)
 	})
 	if err != nil {
+		s.auditDenial(ctx, p, "memory.archive", "memory", in.ID.String(), err)
 		return Memory{}, err
 	}
 	return s.Get(ctx, p, in.ID, "")
-}
-
-// RequestReview is the contract behind the memory_approve tool: it will
-// record a review request for an exact revision (stage 04). It never marks a
-// memory approved; approval is a browser-only action (stage 05).
-func (s *Service) RequestReview(ctx context.Context, p Principal, id uuid.UUID, revision int) error {
-	return ErrNotImplemented
 }
 
 func overridesAt(ctx context.Context, q *db.Queries, id uuid.UUID, rev int32) ([]uuid.UUID, error) {
@@ -542,24 +559,37 @@ func overridesAt(ctx context.Context, q *db.Queries, id uuid.UUID, rev int32) ([
 // the scope the caller is viewing from: the memory must be owned by that
 // scope or one of its ancestors, and Inherited reports which.
 func (s *Service) Get(ctx context.Context, p Principal, id uuid.UUID, scopeRef string) (Memory, error) {
-	var viewFrom uuid.UUID
-	if scopeRef != "" {
-		sc, err := s.ResolveScope(ctx, scopeRef)
-		if err != nil {
-			return Memory{}, err
-		}
-		viewFrom = sc.ID
-	}
-	return s.getAs(ctx, p, id, viewFrom)
-}
-
-func (s *Service) getAs(ctx context.Context, p Principal, id, viewFrom uuid.UUID) (Memory, error) {
 	var out Memory
-	err := postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
+		var viewFrom uuid.UUID
+		if scopeRef != "" {
+			// Resolved as the principal: an unreadable scope is not found.
+			sc, err := resolveScope(ctx, tx.Q, scopeRef)
+			if err != nil {
+				return err
+			}
+			viewFrom = sc.ID
+		}
 		var err error
 		out, err = getInTx(ctx, tx.Q, p, id, viewFrom)
 		return err
 	})
+	if err != nil {
+		s.auditDenial(ctx, p, "memory.get", "memory", id.String(), err)
+	}
+	return out, err
+}
+
+func (s *Service) getAs(ctx context.Context, p Principal, id, viewFrom uuid.UUID) (Memory, error) {
+	var out Memory
+	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
+		var err error
+		out, err = getInTx(ctx, tx.Q, p, id, viewFrom)
+		return err
+	})
+	if err != nil {
+		s.auditDenial(ctx, p, "memory.get", "memory", id.String(), err)
+	}
 	return out, err
 }
 
@@ -616,9 +646,34 @@ func getInTx(ctx context.Context, q *db.Queries, p Principal, id, viewFrom uuid.
 		Overrides: overrides, SupersededBy: v.SupersededBy, PromotedFrom: v.PromotedFromMemoryID,
 		CreatedBy: v.CreatedBy, RevisedBy: v.ChangedBy, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
 	}
+	if v.ReviewDecision != nil && v.ReviewerID != nil && v.ReviewedAt != nil {
+		m.Review = &ReviewInfo{Decision: *v.ReviewDecision, Revision: m.Revision, Reviewer: *v.ReviewerID, ReviewedAt: *v.ReviewedAt}
+	}
 	if len(overrides) > 0 {
-		// Approval-gated override behaviour lands in stage 04.
+		// Links take effect only with an approval of this exact revision.
 		m.OverrideStatus = "proposed"
+		if m.Trust == TrustApproved && m.Review != nil && m.Review.Decision == "approved" {
+			m.OverrideStatus = "approved"
+		}
+	}
+	// Provenance links to memories the reader cannot see are redacted, so a
+	// promotion never reveals the source scope's memory to its new audience.
+	for _, link := range []**uuid.UUID{&m.PromotedFrom, &m.SupersededBy} {
+		if *link == nil {
+			continue
+		}
+		target, err := q.GetMemoryScope(ctx, **link)
+		if err != nil {
+			*link = nil
+			continue
+		}
+		ok, err := q.CanReadMemoriesOf(ctx, db.CanReadMemoriesOfParams{PrincipalID: p.ID, TargetScopeID: target})
+		if err != nil {
+			return Memory{}, err
+		}
+		if !ok {
+			*link = nil
+		}
 	}
 	if pr, err := q.GetPrincipal(ctx, v.CreatedBy); err == nil {
 		m.CreatedByName = pr.DisplayName
@@ -632,7 +687,7 @@ func getInTx(ctx context.Context, q *db.Queries, p Principal, id, viewFrom uuid.
 // History returns every content revision and lifecycle event of a memory.
 func (s *Service) History(ctx context.Context, p Principal, id uuid.UUID) (History, error) {
 	var out History
-	err := postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		m, err := getInTx(ctx, tx.Q, p, id, uuid.Nil)
 		if err != nil {
 			return err
@@ -670,6 +725,9 @@ func (s *Service) History(ctx context.Context, p Principal, id uuid.UUID) (Histo
 		}
 		return nil
 	})
+	if err != nil {
+		s.auditDenial(ctx, p, "memory.history", "memory", id.String(), err)
+	}
 	return out, err
 }
 
@@ -690,7 +748,7 @@ func (s *Service) Recent(ctx context.Context, p Principal, scopeRef string, kind
 		return nil, err
 	}
 	out := []SearchResult{}
-	err = postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err = postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		vs, err := visibleScopes(ctx, tx.Q, p, scopeRef)
 		if err != nil {
 			return err
@@ -707,7 +765,7 @@ func (s *Service) Recent(ctx context.Context, p Principal, scopeRef string, kind
 				ID: r.ID, OriginScope: r.ScopePath, Inherited: inherited[r.ScopeID], Kind: Kind(r.Kind),
 				Status: Status(r.Status), Trust: Trust(r.Trust), Revision: int(r.CurrentRevision),
 				Title: r.Title, Content: r.Content, Rationale: r.Rationale, SourceURI: deref(r.SourceUri),
-				CreatedBy: r.CreatedBy, UpdatedAt: r.UpdatedAt,
+				CreatedBy: r.CreatedBy, UpdatedAt: r.UpdatedAt, ApprovedBy: r.ReviewerID, ApprovedAt: r.ReviewedAt,
 			})
 		}
 		return nil

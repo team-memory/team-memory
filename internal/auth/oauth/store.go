@@ -8,7 +8,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -80,8 +79,14 @@ type refreshToken struct {
 	resource string
 	authTime time.Time
 	expires  time.Time
-	used     bool
+	usedAt   time.Time
 }
+
+// refreshGrace is how long after rotation a repeated presentation of the
+// old token is treated as a client race rather than theft: the repeat is
+// refused, but the family survives, so the request that won keeps the
+// session. Later reuse revokes the family.
+const refreshGrace = 10 * time.Second
 
 func (r *refreshToken) GetAMR() []string            { return nil }
 func (r *refreshToken) GetAudience() []string       { return []string{r.resource} }
@@ -91,24 +96,17 @@ func (r *refreshToken) GetScopes() []string         { return r.scopes }
 func (r *refreshToken) GetSubject() string          { return r.subject }
 func (r *refreshToken) SetCurrentScopes(s []string) { r.scopes = s }
 
-// store implements op.Storage in memory.
+// store implements op.Storage on a stateStore.
 type store struct {
 	cfg     *Config
 	keys    *Keyring
 	clients *clientRegistry
+	state   stateStore
 	now     func() time.Time
-
-	mu       sync.Mutex
-	requests map[string]*authRequest
-	codes    map[string]string // code -> request id
-	refresh  map[string]*refreshToken
 }
 
-func newStore(cfg *Config, keys *Keyring, clients *clientRegistry) *store {
-	return &store{
-		cfg: cfg, keys: keys, clients: clients, now: time.Now,
-		requests: map[string]*authRequest{}, codes: map[string]string{}, refresh: map[string]*refreshToken{},
-	}
+func newStore(cfg *Config, keys *Keyring, clients *clientRegistry, state stateStore) *store {
+	return &store{cfg: cfg, keys: keys, clients: clients, state: state, now: time.Now}
 }
 
 type ctxKey int
@@ -135,177 +133,126 @@ func (s *store) CreateAuthRequest(ctx context.Context, req *oidc.AuthRequest, _ 
 		// Our only resource; a client that omits the parameter gets it.
 		resource = s.cfg.Resource()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sweepLocked()
-	if len(s.requests) >= maxPending {
-		return nil, oidc.ErrServerError().WithDescription("too many pending sign-ins")
-	}
 	a := &authRequest{
 		id: uuid.NewString(), clientID: req.ClientID, redirectURI: req.RedirectURI, scopes: req.Scopes,
 		state: req.State, nonce: req.Nonce, responseType: req.ResponseType, responseMode: req.ResponseMode,
 		codeChallenge: &oidc.CodeChallenge{Challenge: req.CodeChallenge, Method: req.CodeChallengeMethod},
-		resource:      resource, created: s.now(),
+		resource:      resource, created: s.now().UTC().Truncate(time.Microsecond),
 	}
-	s.requests[a.id] = a
+	if err := s.state.putRequest(ctx, a); err != nil {
+		if errors.Is(err, errCapacity) {
+			return nil, oidc.ErrServerError().WithDescription("too many pending sign-ins")
+		}
+		return nil, err
+	}
 	return a, nil
 }
 
-func (s *store) sweepLocked() {
-	cut := s.now().Add(-authRequestTTL)
-	for id, a := range s.requests {
-		if a.created.Before(cut) {
-			delete(s.requests, id)
-		}
-	}
-	for c, id := range s.codes {
-		if _, ok := s.requests[id]; !ok {
-			delete(s.codes, c)
-		}
-	}
-	now := s.now()
-	for h, r := range s.refresh {
-		if !now.Before(r.expires) {
-			delete(s.refresh, h)
-		}
-	}
+// request returns a pending authorization request.
+func (s *store) request(ctx context.Context, id string) (*authRequest, error) {
+	return s.state.getRequest(ctx, id)
 }
 
-// request returns a copy, so callers never read fields that complete
-// writes concurrently.
-func (s *store) request(id string) (*authRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.requests[id]
-	if !ok || s.now().Sub(a.created) > authRequestTTL {
-		return nil, errNotFound
-	}
-	cp := *a
-	return &cp, nil
-}
-
-func (s *store) AuthRequestByID(_ context.Context, id string) (op.AuthRequest, error) {
-	return s.request(id)
+func (s *store) AuthRequestByID(ctx context.Context, id string) (op.AuthRequest, error) {
+	return s.request(ctx, id)
 }
 
 // AuthRequestByCode consumes the code: op looks a code up once per token
 // request, so two concurrent redemptions of the same code cannot both
 // succeed. A failed redemption (wrong PKCE verifier) also burns the code.
-func (s *store) AuthRequestByCode(_ context.Context, code string) (op.AuthRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id, ok := s.codes[code]
-	if !ok {
-		return nil, errNotFound
+func (s *store) AuthRequestByCode(ctx context.Context, code string) (op.AuthRequest, error) {
+	id, err := s.state.takeCode(ctx, hashToken(code))
+	if err != nil {
+		return nil, err
 	}
-	delete(s.codes, code)
-	a, ok := s.requests[id]
-	if !ok || s.now().Sub(a.created) > authRequestTTL {
-		return nil, errNotFound
-	}
-	cp := *a
-	return &cp, nil
+	return s.request(ctx, id)
 }
 
-func (s *store) SaveAuthCode(_ context.Context, id, code string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.requests[id]; !ok {
-		return errNotFound
-	}
-	s.codes[code] = id
-	return nil
+func (s *store) SaveAuthCode(ctx context.Context, id, code string) error {
+	return s.state.saveCode(ctx, hashToken(code), id)
 }
 
 // DeleteAuthRequest is called when a code is redeemed, so a code is single
 // use.
-func (s *store) DeleteAuthRequest(_ context.Context, id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.requests, id)
-	for c, rid := range s.codes {
-		if rid == id {
-			delete(s.codes, c)
-		}
-	}
-	return nil
+func (s *store) DeleteAuthRequest(ctx context.Context, id string) error {
+	return s.state.deleteRequest(ctx, id)
 }
 
 // complete records the upstream login result on a pending request.
-func (s *store) complete(id, subject, idp string, at time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.requests[id]
-	if !ok || a.done || s.now().Sub(a.created) > authRequestTTL {
-		return errNotFound
-	}
-	a.subject, a.idp, a.authTime, a.done = subject, idp, at, true
-	return nil
+func (s *store) complete(ctx context.Context, id, subject, idp string, at time.Time) error {
+	return s.state.completeRequest(ctx, id, subject, idp, at)
 }
 
 func (s *store) CreateAccessToken(context.Context, op.TokenRequest) (string, time.Time, error) {
 	return uuid.NewString(), s.now().Add(time.Duration(s.cfg.AccessTokenTTL)), nil
 }
 
-func (s *store) CreateAccessAndRefreshTokens(_ context.Context, req op.TokenRequest, current string) (string, string, time.Time, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) CreateAccessAndRefreshTokens(ctx context.Context, req op.TokenRequest, current string) (string, string, time.Time, error) {
 	var next refreshToken
 	switch r := req.(type) {
 	case *authRequest:
 		next = refreshToken{family: uuid.NewString(), clientID: r.clientID, subject: r.subject, idp: r.idp,
-			scopes: r.scopes, resource: r.resource, authTime: r.authTime}
+			scopes: r.scopes, resource: r.resource, authTime: r.authTime,
+			expires: s.now().Add(time.Duration(s.cfg.RefreshTokenTTL))}
 	case *refreshToken:
-		old, ok := s.refresh[hashToken(current)]
+		old, ok, err := s.state.useRefresh(ctx, hashToken(current))
+		if err != nil {
+			return "", "", time.Time{}, err
+		}
 		if !ok {
+			// Another request rotated the token after op looked it up.
+			if err := s.reused(ctx, current); err != nil {
+				return "", "", time.Time{}, err
+			}
 			return "", "", time.Time{}, op.ErrInvalidRefreshToken
 		}
-		if old.used {
-			// Two requests looked the token up before either rotated it:
-			// this is reuse too, so the family ends here as well.
-			s.revokeFamilyLocked(old.family)
-			return "", "", time.Time{}, op.ErrInvalidRefreshToken
-		}
-		old.used = true
 		next = *old
-		next.used = false
+		next.usedAt = time.Time{}
 		next.scopes = r.scopes
+		// Rotation keeps the original lifetime: refresh never extends a
+		// session beyond refresh_token_ttl from the login.
 	default:
 		return "", "", time.Time{}, errors.New("unsupported token request")
 	}
-	next.expires = s.now().Add(time.Duration(s.cfg.RefreshTokenTTL))
-	if req, ok := req.(*refreshToken); ok {
-		// Rotation keeps the original lifetime: refresh never extends a
-		// session beyond refresh_token_ttl from the login.
-		next.expires = req.expires
-	}
 	secret := "tmrt_" + randomString(32)
-	s.refresh[hashToken(secret)] = &next
+	if err := s.state.putRefresh(ctx, hashToken(secret), &next); err != nil {
+		return "", "", time.Time{}, err
+	}
 	return uuid.NewString(), secret, s.now().Add(time.Duration(s.cfg.AccessTokenTTL)), nil
 }
 
-func (s *store) TokenRequestByRefreshToken(_ context.Context, token string) (op.RefreshTokenRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, ok := s.refresh[hashToken(token)]
-	if !ok || !s.now().Before(r.expires) {
-		return nil, op.ErrInvalidRefreshToken
+// reused handles a rotated token presented again: inside refreshGrace it is
+// a client race and only this request fails; later it is treated as theft
+// and the whole family is revoked (OAuth 2.1 section 4.3.1).
+func (s *store) reused(ctx context.Context, token string) error {
+	r, err := s.state.getRefresh(ctx, hashToken(token))
+	if errors.Is(err, errNotFound) {
+		return nil
 	}
-	if r.used {
-		// Reuse of a rotated token: assume theft and end the family.
-		s.revokeFamilyLocked(r.family)
-		return nil, op.ErrInvalidRefreshToken
+	if err != nil {
+		return err
 	}
-	cp := *r
-	return &cp, nil
+	if !r.usedAt.IsZero() && s.now().Sub(r.usedAt) <= refreshGrace {
+		return nil
+	}
+	return s.state.revokeFamily(ctx, r.family)
 }
 
-func (s *store) revokeFamilyLocked(family string) {
-	for h, r := range s.refresh {
-		if r.family == family {
-			delete(s.refresh, h)
-		}
+func (s *store) TokenRequestByRefreshToken(ctx context.Context, token string) (op.RefreshTokenRequest, error) {
+	r, err := s.state.getRefresh(ctx, hashToken(token))
+	if errors.Is(err, errNotFound) {
+		return nil, op.ErrInvalidRefreshToken
 	}
+	if err != nil {
+		return nil, err
+	}
+	if !r.usedAt.IsZero() {
+		if err := s.reused(ctx, token); err != nil {
+			return nil, err
+		}
+		return nil, op.ErrInvalidRefreshToken
+	}
+	return r, nil
 }
 
 // TerminateSession backs op's end_session endpoint, which Team Memory does
@@ -315,11 +262,11 @@ func (s *store) TerminateSession(context.Context, string, string) error {
 	return oidc.ErrRequestNotSupported().WithDescription("end_session is not supported; revoke the refresh token")
 }
 
-func (s *store) RevokeToken(_ context.Context, token, _, clientID string) *oidc.Error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if r, ok := s.refresh[hashToken(token)]; ok && r.clientID == clientID {
-		s.revokeFamilyLocked(r.family)
+func (s *store) RevokeToken(ctx context.Context, token, _, clientID string) *oidc.Error {
+	if r, err := s.state.getRefresh(ctx, hashToken(token)); err == nil && r.clientID == clientID {
+		if err := s.state.revokeFamily(ctx, r.family); err != nil {
+			return oidc.ErrServerError()
+		}
 	}
 	// Access tokens are short-lived JWTs and cannot be revoked
 	// individually; revoking succeeds silently (RFC 7009 section 2.2).
@@ -330,11 +277,9 @@ func (s *store) RevokeToken(_ context.Context, token, _, clientID string) *oidc.
 // passes the returned token ID to RevokeToken. The ID is the token itself,
 // because RevokeToken looks tokens up by hash; returning the family ID
 // would make every refresh-token revocation a silent no-op.
-func (s *store) GetRefreshTokenInfo(_ context.Context, clientID, token string) (string, string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, ok := s.refresh[hashToken(token)]
-	if !ok || r.clientID != clientID {
+func (s *store) GetRefreshTokenInfo(ctx context.Context, clientID, token string) (string, string, error) {
+	r, err := s.state.getRefresh(ctx, hashToken(token))
+	if err != nil || r.clientID != clientID {
 		return "", "", op.ErrInvalidRefreshToken
 	}
 	return r.subject, token, nil
@@ -386,7 +331,9 @@ func (s *store) GetPrivateClaimsFromScopes(context.Context, string, string, []st
 // issuer to access tokens. The idp claim is informational: authorization
 // uses only the subject (the principal id).
 func (s *store) GetPrivateClaimsFromRequest(_ context.Context, req op.TokenRequest, _ []string) (map[string]any, error) {
-	claims := map[string]any{"scope": strings.Join(slices.DeleteFunc(slices.Clone(req.GetScopes()), func(sc string) bool {
+	// token_use distinguishes access tokens from ID tokens, which share the
+	// issuer, signing keys and (in op) the audience. The verifier requires it.
+	claims := map[string]any{"token_use": tokenUseAccess, "scope": strings.Join(slices.DeleteFunc(slices.Clone(req.GetScopes()), func(sc string) bool {
 		return sc == oidc.ScopeOpenID || sc == oidc.ScopeOfflineAccess
 	}), " ")}
 	switch r := req.(type) {

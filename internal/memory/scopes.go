@@ -3,7 +3,7 @@ package memory
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -17,10 +17,14 @@ import (
 )
 
 // Service is the memory engine. Methods taking a Principal enforce the scope
-// access rules; methods without one are operator paths used by the CLI, which
-// is trusted by virtue of having database access.
+// access rules in Go and run as that principal, so PostgreSQL row-level
+// security enforces them again; such a Service is built on the app pool.
+// Methods without a Principal are operator paths used by the CLI; they work
+// only on a pool connected as the operator role.
 type Service struct {
 	pool *pgxpool.Pool
+	// Logger receives audit-write failures. Nil discards them.
+	Logger *slog.Logger
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
@@ -46,6 +50,8 @@ func mapDBError(err error) error {
 			return &ValidationError{Msg: "already exists: " + pgErr.ConstraintName}
 		case "23503": // foreign_key_violation
 			return &ValidationError{Msg: "referenced record does not exist"}
+		case "42501": // insufficient_privilege: an RLS policy or guard trigger refused
+			return ErrForbidden
 		}
 	}
 	return err
@@ -281,20 +287,50 @@ func (s *Service) AddMember(ctx context.Context, actor uuid.UUID, scopeRef strin
 	})
 }
 
+// RemoveMember revokes a membership (operator path, audited). Revoking the
+// organization owner's root grant is allowed here and only here.
+func (s *Service) RemoveMember(ctx context.Context, scopeRef string, principal uuid.UUID) error {
+	return postgres.WithTx(ctx, s.pool, uuid.Nil, func(tx postgres.Tx) error {
+		sc, err := resolveScope(ctx, tx.Q, scopeRef)
+		if err != nil {
+			return err
+		}
+		n, err := tx.Q.DeleteScopeMember(ctx, db.DeleteScopeMemberParams{ScopeID: sc.ID, PrincipalID: principal})
+		if err != nil {
+			return mapDBError(err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return audit(ctx, tx, sc.OrgID, uuid.Nil, "scope.member.revoke", "scope_member", principal.String(), &sc.ID,
+			map[string]any{"via": "cli"})
+	})
+}
+
 // effectiveRole is the strongest role that applies to a scope for the
-// principal: a direct membership, or a cascading grant on an ancestor.
+// principal: a direct membership, or a cascading grant on an ancestor. It is
+// empty for scopes readable only as inherited, and for invisible scopes.
 func effectiveRole(ctx context.Context, q *db.Queries, p Principal, scopeID uuid.UUID) (Role, error) {
-	roles, err := q.RolesOnScope(ctx, db.RolesOnScopeParams{ScopeID: scopeID, PrincipalID: p.ID})
+	a, err := q.AccessOnScope(ctx, db.AccessOnScopeParams{PrincipalID: p.ID, ScopeID: scopeID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	var best Role
-	for _, r := range roles {
-		if Role(r).rank() > best.rank() {
-			best = Role(r)
-		}
+	return roleForRank(a.Rank), nil
+}
+
+func roleForRank(rank int16) Role {
+	switch rank {
+	case 1:
+		return RoleReader
+	case 2:
+		return RoleWriter
+	case 3:
+		return RoleMaintainer
 	}
-	return best, nil
+	return ""
 }
 
 // visibleScopes returns the scope itself and its ancestors if the principal
@@ -339,7 +375,7 @@ func VisibleScopesTx(ctx context.Context, q *db.Queries, p Principal, scopeRef s
 // ErrNotFound if the principal cannot read the scope.
 func (s *Service) VisibleScopes(ctx context.Context, p Principal, scopeRef string) ([]VisibleScope, error) {
 	var out []VisibleScope
-	err := postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		var err error
 		out, err = visibleScopes(ctx, tx.Q, p, scopeRef)
 		return err
@@ -351,34 +387,16 @@ func (s *Service) VisibleScopes(ctx context.Context, p Principal, scopeRef strin
 // with a membership and the descendants of cascading grants.
 func (s *Service) BrowsableScopes(ctx context.Context, p Principal) ([]Scope, error) {
 	var out []Scope
-	err := postgres.WithReadTx(ctx, s.pool, p.ID, func(tx postgres.Tx) error {
+	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		rows, err := tx.Q.ReadableScopes(ctx, p.ID)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			out = append(out, toScope(r))
+			out = append(out, Scope{ID: r.ID, OrgID: r.OrgID, ParentID: r.ParentID, Level: r.Level,
+				Slug: r.Slug, Name: r.Name, Depth: int(r.Depth), Path: r.Path})
 		}
 		return nil
 	})
 	return out, err
-}
-
-func audit(ctx context.Context, tx postgres.Tx, org uuid.UUID, actor uuid.UUID, action, targetType, targetID string, scope *uuid.UUID, details map[string]any) error {
-	b, err := jsonBytes(details)
-	if err != nil {
-		return err
-	}
-	var actorPtr *uuid.UUID
-	if actor != uuid.Nil {
-		actorPtr = &actor
-	}
-	orgPtr := &org
-	if err := tx.Q.InsertAuditEvent(ctx, db.InsertAuditEventParams{
-		OrgID: orgPtr, ActorID: actorPtr, Action: action, TargetType: targetType,
-		TargetID: targetID, ScopeID: scope, Outcome: "success", Details: b,
-	}); err != nil {
-		return fmt.Errorf("audit: %w", err)
-	}
-	return nil
 }

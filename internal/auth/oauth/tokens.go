@@ -18,6 +18,10 @@ import (
 // strict.
 const leeway = 30 * time.Second
 
+// tokenUseAccess is the token_use claim of Team Memory access tokens. ID
+// tokens share the issuer, keys and audience, so the verifier requires it.
+const tokenUseAccess = "access"
+
 // AccessTokens verifies Team Memory access tokens. A token is accepted only
 // if it is signed by a configured key, its issuer is exactly this server,
 // its audience contains the canonical MCP resource URI, it has not expired,
@@ -52,6 +56,7 @@ type accessClaims struct {
 	NotBefore *int64   `json:"nbf"`
 	Scope     string   `json:"scope"`
 	ClientID  string   `json:"client_id"`
+	TokenUse  string   `json:"token_use"`
 }
 
 // audience accepts the string and array forms of "aud".
@@ -102,6 +107,9 @@ func (v *AccessTokens) claims(raw string) (accessClaims, error) {
 	case c.Expiry == nil || !now.Before(time.Unix(*c.Expiry, 0)):
 		return c, auth.ErrInvalidCredential
 	case c.NotBefore != nil && now.Add(leeway).Before(time.Unix(*c.NotBefore, 0)):
+		return c, auth.ErrInvalidCredential
+	case c.TokenUse != tokenUseAccess:
+		// An ID token or any other JWT signed by our keys.
 		return c, auth.ErrInvalidCredential
 	}
 	return c, nil

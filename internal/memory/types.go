@@ -6,6 +6,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/team-memory/team-memory/internal/postgres"
+)
+
+// Authentication methods recorded on a Principal.
+const (
+	// AuthPAT is a personal access token (CLI, CI, agents).
+	AuthPAT = "pat"
+	// AuthOAuth is a Team Memory OAuth access token (MCP clients).
+	AuthOAuth = "oauth"
+	// AuthPortal is an authenticated browser session with CSRF protection
+	// (stage 05). Only it may complete reviews and promotions.
+	AuthPortal = "portal"
 )
 
 // Principal is an authenticated actor. Adapters construct it from a verified
@@ -14,9 +27,22 @@ type Principal struct {
 	ID          uuid.UUID `json:"id"`
 	Kind        string    `json:"kind"` // human | service
 	DisplayName string    `json:"display_name"`
-	// AuthMethod records how the principal authenticated (e.g. "pat").
-	// Stage 04 uses it to keep approval out of reach of token-based calls.
+	// AuthMethod records how the principal authenticated: AuthPAT,
+	// AuthOAuth or AuthPortal. Review completion requires AuthPortal, so
+	// MCP and API bearer calls can never approve or promote, even for a
+	// human maintainer's token.
 	AuthMethod string `json:"auth_method"`
+}
+
+func (p Principal) actor() postgres.Actor {
+	return postgres.Actor{ID: p.ID, AuthMethod: p.AuthMethod}
+}
+
+// browserReview reports whether p may complete a review: a human principal
+// in an authenticated portal session. A principal kind alone does not prove
+// human involvement; the browser interaction is the workflow boundary.
+func (p Principal) browserReview() bool {
+	return p.AuthMethod == AuthPortal && p.Kind == "human"
 }
 
 type Kind string
@@ -47,8 +73,8 @@ const (
 	// TrustCited means a source URI was supplied and passed syntax/scheme
 	// validation. It does not mean the source was fetched or supports the claim.
 	TrustCited Trust = "cited"
-	// TrustApproved means a maintainer reviewed this exact revision in the
-	// browser (stage 05). It is never set through MCP.
+	// TrustApproved means a maintainer reviewed this exact revision in a
+	// browser review. It is never set through MCP or a bearer-token API.
 	TrustApproved Trust = "approved"
 )
 
@@ -114,29 +140,41 @@ type OrgSettings struct {
 
 // Memory is the current state of a memory as seen from a requested scope.
 type Memory struct {
-	ID             uuid.UUID   `json:"id"`
-	ScopeID        uuid.UUID   `json:"scope_id"`
-	OriginScope    string      `json:"origin_scope"`
-	Inherited      bool        `json:"inherited"`
-	Kind           Kind        `json:"kind"`
-	Status         Status      `json:"status"`
-	Trust          Trust       `json:"trust"`
-	Revision       int         `json:"revision"`
-	StateVersion   int64       `json:"state_version"`
-	Title          string      `json:"title"`
-	Content        string      `json:"content"`
-	Rationale      string      `json:"rationale,omitempty"`
-	SourceURI      string      `json:"source_uri,omitempty"`
-	Overrides      []uuid.UUID `json:"overrides,omitempty"`
-	SupersededBy   *uuid.UUID  `json:"superseded_by,omitempty"`
-	PromotedFrom   *uuid.UUID  `json:"promoted_from,omitempty"`
-	CreatedBy      uuid.UUID   `json:"created_by"`
-	CreatedByName  string      `json:"created_by_name,omitempty"`
-	RevisedBy      uuid.UUID   `json:"revised_by"`
-	RevisedByName  string      `json:"revised_by_name,omitempty"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-	OverrideStatus string      `json:"override_status,omitempty"`
+	ID            uuid.UUID   `json:"id"`
+	ScopeID       uuid.UUID   `json:"scope_id"`
+	OriginScope   string      `json:"origin_scope"`
+	Inherited     bool        `json:"inherited"`
+	Kind          Kind        `json:"kind"`
+	Status        Status      `json:"status"`
+	Trust         Trust       `json:"trust"`
+	Revision      int         `json:"revision"`
+	StateVersion  int64       `json:"state_version"`
+	Title         string      `json:"title"`
+	Content       string      `json:"content"`
+	Rationale     string      `json:"rationale,omitempty"`
+	SourceURI     string      `json:"source_uri,omitempty"`
+	Overrides     []uuid.UUID `json:"overrides,omitempty"`
+	SupersededBy  *uuid.UUID  `json:"superseded_by,omitempty"`
+	PromotedFrom  *uuid.UUID  `json:"promoted_from,omitempty"`
+	CreatedBy     uuid.UUID   `json:"created_by"`
+	CreatedByName string      `json:"created_by_name,omitempty"`
+	RevisedBy     uuid.UUID   `json:"revised_by"`
+	RevisedByName string      `json:"revised_by_name,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+	// OverrideStatus is "proposed" until the revision carrying the links is
+	// approved, then "approved". Only approved overrides hide anything.
+	OverrideStatus string `json:"override_status,omitempty"`
+	// Review is the latest review outcome of the current revision, if any.
+	Review *ReviewInfo `json:"review,omitempty"`
+}
+
+// ReviewInfo reports who reviewed the current revision and how.
+type ReviewInfo struct {
+	Decision   string    `json:"decision"` // approved | rejected
+	Revision   int       `json:"revision"`
+	Reviewer   uuid.UUID `json:"reviewer"`
+	ReviewedAt time.Time `json:"reviewed_at"`
 }
 
 // SearchResult is one memory in a listing (recent memories, resources).
@@ -155,6 +193,9 @@ type SearchResult struct {
 	SourceURI   string    `json:"source_uri,omitempty"`
 	CreatedBy   uuid.UUID `json:"created_by"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// ApprovedBy and ApprovedAt are set when Trust is approved.
+	ApprovedBy *uuid.UUID `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // Revision is an immutable content snapshot.

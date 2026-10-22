@@ -8,21 +8,26 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/team-memory/team-memory/internal/auth"
 	"github.com/team-memory/team-memory/internal/auth/oauth"
 	"github.com/team-memory/team-memory/internal/mcp"
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/ratelimit"
 	"github.com/team-memory/team-memory/internal/search"
 )
 
 // Options configures the server.
 type Options struct {
+	// Pool must connect as a member of team_memory_app (see
+	// postgres.CheckRuntimeRole): every request runs under RLS.
 	Pool         *pgxpool.Pool
 	Search       *search.Service
 	Logger       *slog.Logger
@@ -33,6 +38,12 @@ type Options struct {
 	PublicURL     string
 	// OAuth overrides the facade's dependencies (tests).
 	OAuth oauth.Options
+	// RatePerSecond and RateBurst limit MCP requests per principal
+	// (defaults 20/s, burst 60). A negative rate disables the limit.
+	RatePerSecond float64
+	RateBurst     int
+	// MaxBodyBytes caps MCP request bodies (default mcp.DefaultMaxBodyBytes).
+	MaxBodyBytes int64
 }
 
 // Server is the assembled handler.
@@ -54,7 +65,19 @@ func New(opts Options) *Server {
 	s := &Server{}
 	pats := auth.NewPATs(opts.Pool)
 	chain := auth.Chain{PATs: pats}
-	mcpOpts := mcp.Options{DefaultScope: opts.DefaultScope, Logger: opts.Logger}
+	failures := auth.NewFailureAuditor(opts.Pool, opts.Logger)
+	rate, burst := opts.RatePerSecond, opts.RateBurst
+	switch {
+	case rate == 0:
+		rate = 20
+	case rate < 0:
+		rate = 0
+	}
+	if burst == 0 {
+		burst = 60
+	}
+	mcpOpts := mcp.Options{DefaultScope: opts.DefaultScope, Logger: opts.Logger, MaxBodyBytes: opts.MaxBodyBytes,
+		Limiter: ratelimit.New(rate, burst), OnAuthFailure: failures.Record}
 
 	var ssoErr error
 	if opts.SSOConfigPath != "" {
@@ -69,7 +92,9 @@ func New(opts Options) *Server {
 	s.ready = &readiness{pool: opts.Pool, sso: s.sso, ssoConfigured: opts.SSOConfigPath != "", ssoErr: ssoErr}
 
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", s.ready.gate(mcp.Handler(memory.NewService(opts.Pool), opts.Search, chain, mcpOpts)))
+	svc := memory.NewService(opts.Pool)
+	svc.Logger = opts.Logger
+	mux.Handle("/mcp", s.ready.gate(mcp.Handler(svc, opts.Search, chain, mcpOpts)))
 	if s.sso != nil {
 		oauthMux := http.NewServeMux()
 		s.sso.Register(oauthMux)
@@ -81,8 +106,40 @@ func New(opts Options) *Server {
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /readyz", s.ready.serve)
-	s.handler = mux
+	s.handler = withRequestContext(mux)
 	return s
+}
+
+// withRequestContext gives every request an ID (a valid incoming
+// X-Request-Id, else a random one), echoes it in the response, and attaches
+// it and the client address to the context for audit events.
+func withRequestContext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if !validRequestID(id) {
+			id = uuid.NewString()
+		}
+		w.Header().Set("X-Request-Id", id)
+		addr := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			addr = host
+		}
+		ctx := memory.WithRequestID(r.Context(), id)
+		ctx = auth.WithClientAddr(ctx, addr)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func buildSSO(opts Options) (*oauth.Server, error) {
@@ -93,6 +150,12 @@ func buildSSO(opts Options) (*oauth.Server, error) {
 	o := opts.OAuth
 	if o.Identities == nil {
 		o.Identities = auth.NewIdentities(opts.Pool)
+	}
+	if o.Pool == nil {
+		o.Pool = opts.Pool
+	}
+	if o.Audit == nil {
+		o.Audit = auth.NewFailureAuditor(opts.Pool, opts.Logger)
 	}
 	if o.Logger == nil {
 		o.Logger = opts.Logger

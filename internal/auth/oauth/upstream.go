@@ -95,13 +95,19 @@ func (u *upstream) oauth2Config() (*oauth2.Config, *gooidc.Provider, error) {
 	}, p, nil
 }
 
-// authCodeURL starts the upstream login with state, nonce and PKCE.
-func (u *upstream) authCodeURL(state, nonce, verifier string) (string, error) {
+// authCodeURL starts the upstream login with state, nonce and PKCE. A
+// forced login (prompt=login) is used for portal SSO linking, which must
+// prove control of the upstream identity now, not reuse an IdP session.
+func (u *upstream) authCodeURL(state, nonce, verifier string, forceLogin bool) (string, error) {
 	oc, _, err := u.oauth2Config()
 	if err != nil {
 		return "", err
 	}
-	return oc.AuthCodeURL(state, gooidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), nil
+	opts := []oauth2.AuthCodeOption{gooidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	if forceLogin {
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
+	}
+	return oc.AuthCodeURL(state, opts...), nil
 }
 
 // upstreamClaims are the ID token claims Team Memory reads.
@@ -144,7 +150,43 @@ func (u *upstream) exchange(ctx context.Context, code, verifier, nonce string) (
 	if err := u.checkPolicy(idt, c); err != nil {
 		return auth.ExternalIdentity{}, err
 	}
-	return auth.ExternalIdentity{Issuer: idt.Issuer, Subject: idt.Subject, Email: c.Email, Name: c.Name}, nil
+	groups, err := u.groups(idt)
+	if err != nil {
+		return auth.ExternalIdentity{}, err
+	}
+	return auth.ExternalIdentity{Issuer: idt.Issuer, Subject: idt.Subject, Email: c.Email, Name: c.Name,
+		Groups: groups, AuthTime: idTokenAuthTime(idt)}, nil
+}
+
+// groups returns the string members of the provider's groups claim,
+// capped so an oversized claim cannot amplify database work.
+func (u *upstream) groups(idt *gooidc.IDToken) ([]string, error) {
+	var all map[string]any
+	if err := idt.Claims(&all); err != nil {
+		return nil, err
+	}
+	raw, _ := all[u.cfg.GroupsClaim].([]any)
+	var out []string
+	for _, g := range raw {
+		if s, ok := g.(string); ok && s != "" && len(s) <= 500 {
+			out = append(out, s)
+		}
+		if len(out) == 200 {
+			break
+		}
+	}
+	return out, nil
+}
+
+// idTokenAuthTime is the auth_time claim, or zero when absent.
+func idTokenAuthTime(idt *gooidc.IDToken) time.Time {
+	var c struct {
+		AuthTime int64 `json:"auth_time"`
+	}
+	if err := idt.Claims(&c); err != nil || c.AuthTime == 0 {
+		return time.Time{}
+	}
+	return time.Unix(c.AuthTime, 0)
 }
 
 // errPolicy marks a login refused by the provider's allow rules.
@@ -161,13 +203,12 @@ func (u *upstream) checkPolicy(idt *gooidc.IDToken, c upstreamClaims) error {
 		}
 	}
 	if len(u.cfg.AllowedGroups) > 0 {
-		var all map[string]any
-		if err := idt.Claims(&all); err != nil {
+		groups, err := u.groups(idt)
+		if err != nil {
 			return err
 		}
-		groups, _ := all[u.cfg.GroupsClaim].([]any)
 		for _, g := range groups {
-			if s, ok := g.(string); ok && slices.Contains(u.cfg.AllowedGroups, s) {
+			if slices.Contains(u.cfg.AllowedGroups, g) {
 				return nil
 			}
 		}
