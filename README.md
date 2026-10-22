@@ -2,7 +2,7 @@
 
 A self-hosted, permission-aware shared memory for developers and their AI coding agents, served over MCP (Model Context Protocol).
 
-> **Status: early development (stage 05 of 7).** Not production-ready. Row-level security, the review and promotion services, production OAuth and the web portal (browse, search, review, promote) are in place; the Helm chart and operations (stage 06) are not. See `proposal.md` for the plan and `docs/handoff/` for progress.
+> **Status: pre-release (stages 01-06 built, stage 07 in progress).** Not yet verified for production use. The service, retrieval, SSO, row-level security, review and promotion services, web portal, git mirror, Helm chart, backups and observability are built and tested. The release gates in `docs/release-checklist.md` are not all met: the two-client end-to-end run (stage 07) and a real-project pilot are outstanding, so the current assessment is **no-go for publishing**. See `docs/handoff/07-release.md`.
 
 This repository holds both the service code and the planning material (`proposal.md`, `review-decisions.md`, `prompts/`).
 
@@ -179,6 +179,19 @@ make test
 Other targets: `make generate` (sqlc), `make check-generate`, `make lint`, `make run`, `make worker`, `make eval` (retrieval evaluation against a real model, see `docs/eval/retrieval-report.md`) and `make bench-vector` (vector index benchmark). Stage 06 adds `make image`, `make helm-lint`, `make check-alerts`, `make secret-scan`, `make dev-git-up` and `make test-mirror-remote` (authenticated mirror tests against a disposable Gitea), `make k3d-up`/`k3d-down` (disposable cluster), `make rollback-drill`, `make backup-drill` and `make loadtest`.
 
 Layout: `cmd/team-memory` (single binary), `internal/memory` (engine, no transport imports), `internal/search` (hybrid retrieval), `internal/embeddings` (providers, embedding jobs), `internal/jobs` (queue and worker), `internal/mcp` (MCP adapter), `internal/auth` (tokens, bootstrap, identity mapping), `internal/auth/oauth` (authorization server facade), `internal/server` (HTTP assembly and readiness), `internal/mirror` (git export, verify, rebuild), `internal/telemetry` (metrics and tracing), `internal/postgres` (pool, migrations, transactions, sqlc code), `migrations/`, `integration/`, `loadtest/`, `deploy/` (Helm chart, backups, dev environments), `docs/`.
+
+## Status and limitations
+
+- Pre-release; no tagged version. Versioning policy: `CONTRIBUTING.md`.
+- Not yet exercised by more than one real person. The only multi-identity evidence uses synthetic test identities.
+- Embeddings need a reachable Ollama; without one, search is full-text only.
+- Git mirrors are operator-only. Users browse history through the service.
+- Measured gaps against the performance targets are listed in `docs/operations/load-test-report.md`.
+- No external security review has been done. See `SECURITY.md` and `docs/security/threat-model.md` for residual risks.
+
+## Contributing and security
+
+`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`.
 
 ## License
 

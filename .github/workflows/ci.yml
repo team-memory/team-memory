@@ -44,6 +44,20 @@ jobs:
       - name: No process execution in the service (go-git only)
         run: go test -count=1 -run 'TestNoProcessExecution|TestFileTransportIsInProcess' ./internal/mirror/
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   deploy-artifacts:
     runs-on: ubuntu-latest
     steps:
