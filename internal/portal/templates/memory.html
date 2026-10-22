@@ -1,0 +1,112 @@
+{{define "content"}}
+{{with .Data}}
+{{$m := .M}}
+<p class="meta">
+<span class="badge kind">{{$m.Kind}}</span> {{template "trust" $m.Trust}}
+{{if $m.Inherited}}<span class="badge inh">Inherited · read-only here</span>{{end}}
+{{if eq (printf "%s" $m.Status) "superseded"}}<span class="badge warn">Superseded</span>{{end}}
+{{if eq (printf "%s" $m.Status) "archived"}}<span class="badge warn">Archived</span>{{end}}
+<span>owned by <code>{{$m.OriginScope}}</code></span>
+</p>
+{{if or (eq (printf "%s" $m.Trust) "unverified") (eq (printf "%s" $m.Trust) "cited")}}<p class="notice">This is a proposal that no maintainer has approved{{if eq (printf "%s" $m.Trust) "cited"}}. It has a source link, but nobody checked that the source exists or supports the claim{{end}}. It is not team policy.</p>{{end}}
+{{if $m.Inherited}}<p class="hint">Inherited from <code>{{$m.OriginScope}}</code>. To change it, ask a maintainer of that scope; a lower scope can instead propose an override.</p>{{end}}
+
+<section class="content" aria-label="Content">{{md $m.Content}}</section>
+{{if $m.Rationale}}<h2>Rationale</h2><section class="content">{{md $m.Rationale}}</section>{{end}}
+{{if $m.SourceURI}}<p>Source: {{link $m.SourceURI}}</p>{{end}}
+
+<h2>Provenance</h2>
+<dl class="prov">
+<dt>Origin scope</dt><dd><code>{{$m.OriginScope}}</code></dd>
+<dt>Author</dt><dd>{{nm .Names $m.CreatedBy}}, {{ts $m.CreatedAt}}</dd>
+<dt>Current revision</dt><dd>{{$m.Revision}} by {{nm .Names $m.RevisedBy}}, {{ts $m.UpdatedAt}}</dd>
+<dt>Approval</dt><dd>{{if eq (printf "%s" $m.Trust) "approved"}}{{with $m.Review}}Approved by {{nm $.Data.Names .Reviewer}} on {{ts .ReviewedAt}} (revision {{.Revision}}){{end}}{{else}}{{with $m.Review}}{{if eq .Decision "rejected"}}Rejected by {{nm $.Data.Names .Reviewer}} on {{ts .ReviewedAt}}{{else}}Not approved{{end}}{{else}}Not approved{{end}}{{end}}</dd>
+{{if $m.PromotedFrom}}<dt>Promoted from</dt><dd>{{if .Promoted}}<a href="{{u "/m/" .Promoted.ID.String}}">{{.Promoted.Title}}</a>{{end}}</dd>{{else if eq (printf "%s" $m.Status) "active"}}{{end}}
+</dl>
+{{if .Chain}}<h2>Superseded by</h2><ol>{{range .Chain}}<li><a href="{{u "/m/" .ID.String}}">{{.Title}}</a> <span class="badge">{{.Status}}</span> in <code>{{.OriginScope}}</code></li>{{end}}</ol>{{end}}
+
+{{if .Overrides}}
+<h2>Overrides</h2>
+<p>{{if eq $m.OverrideStatus "approved"}}<span class="badge trust-approved">Override in effect</span> In this scope and below, this memory takes precedence over:{{else}}<span class="badge warn">Proposed override, not in effect</span> Until a maintainer approves this exact revision, both memories apply. It would take precedence over:{{end}}</p>
+<ul>{{range .Overrides}}<li><a href="{{u "/m/" .ID.String}}">{{.Title}}</a> from <code>{{.OriginScope}}</code></li>{{end}}</ul>
+{{end}}
+
+{{if .Conflicts}}
+<h2>Similar memories in other scopes</h2>
+<p class="hint">These look alike. Lower scopes win when memories conflict, but only through an approved override.</p>
+<ul>{{range .Conflicts}}
+<li><div class="pair"><div><strong>{{.Memory.Title}}</strong> <code>{{.Memory.OriginScope}}</code>{{md (first 300 .Memory.Content)}}</div>
+<div><strong>{{.Other.Title}}</strong> <code>{{.Other.OriginScope}}</code>{{md (first 300 .Other.Content)}}</div></div>
+<p class="meta">similarity {{printf "%.2f" .Similarity}}</p>
+{{if index $.Data.MarkTarget .Other.ID}}
+<form method="post" action="{{u "/m/" $m.ID.String "/override"}}">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{$m.Revision}}"><input type="hidden" name="overridden" value="{{.Other.ID}}"><input type="hidden" name="scope" value="{{$.Data.From}}">
+<button type="submit">Mark as overriding</button> <span class="hint">Creates a new revision awaiting approval; nothing is hidden until then.</span></form>
+{{end}}</li>{{end}}</ul>
+{{end}}
+
+{{if .Review}}
+<section class="review" aria-labelledby="rev-h">
+<h2 id="rev-h">Maintainer review</h2>
+<p>You are reviewing <strong>revision {{$m.Revision}}</strong> exactly as shown above.</p>
+{{if .Findings}}<p class="flash err" role="alert">Secret scan: possible credentials in {{range .Findings}}{{.Field}} ({{.Rule}}) {{end}}. Approval and promotion will be refused.</p>{{else}}<p class="hint">Secret scan: nothing credential-shaped found.</p>{{end}}
+{{if ne (printf "%s" $m.Trust) "approved"}}
+<form method="post" action="{{u "/m/" $m.ID.String "/approve"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{$m.Revision}}"><input type="hidden" name="state_version" value="{{.StateVer}}"><input type="hidden" name="scope" value="{{.From}}">
+<label for="note">Note (optional)</label><input id="note" name="note" maxlength="2000">
+{{if .Promote}}
+<fieldset><legend>Also promote</legend>
+<p class="hint">Promoting shares this snapshot with reviewers of <code>{{.Promote.Parent.Path}}</code>. If accepted, <strong>every scope below it inherits the memory</strong>, and the original here is superseded. Lower scopes may still override it.</p>
+<label><input type="checkbox" name="promote" value="1"> Approve and promote to <code>{{.Promote.Parent.Name}}</code></label>
+<label><input type="checkbox" name="consent" value="1"> I consent to sharing this snapshot (content, rationale, source and my name) with that scope's reviewers.</label>
+<p class="hint">{{if .Promote.DestMaint}}You are also a maintainer there, so this completes in one step.{{else}}You are not a maintainer there, so this becomes a request in their queue.{{end}}</p>
+<label for="pr">Why it belongs there</label><input id="pr" name="promote_rationale" maxlength="2000">
+</fieldset>
+{{end}}
+<button class="primary" type="submit"{{if .Findings}} disabled{{end}}>Approve revision {{$m.Revision}}</button>
+</form>
+<form method="post" action="{{u "/m/" $m.ID.String "/reject"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{$m.Revision}}"><input type="hidden" name="state_version" value="{{.StateVer}}"><input type="hidden" name="scope" value="{{.From}}">
+<label for="rnote">Rejection note (required)</label><input id="rnote" name="note" maxlength="2000" required>
+<button type="submit">Reject revision {{$m.Revision}}</button>
+</form>
+{{else if .Promote}}
+<form method="post" action="{{u "/m/" $m.ID.String "/promote"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{$m.Revision}}"><input type="hidden" name="scope" value="{{.From}}">
+<h3>Promote to {{.Promote.Parent.Name}}</h3>
+<p class="hint">Shares this approved snapshot with reviewers of <code>{{.Promote.Parent.Path}}</code>. If accepted, every scope below it inherits the memory and the original here is superseded.{{if .Promote.DestMaint}} You are a maintainer there too, so it completes in one step.{{else}} It becomes a request in their queue.{{end}}</p>
+<label><input type="checkbox" name="consent" value="1" required> I consent to sharing this snapshot with that scope's reviewers.</label>
+<label for="pr2">Why it belongs there</label><input id="pr2" name="promote_rationale" maxlength="2000">
+<button class="primary" type="submit"{{if .Findings}} disabled{{end}}>{{if .Promote.DestMaint}}Promote now{{else}}Request promotion{{end}}</button>
+</form>
+{{end}}
+<details><summary>Archive or supersede</summary>
+<form method="post" action="{{u "/m/" $m.ID.String "/archive"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="state_version" value="{{.StateVer}}"><input type="hidden" name="scope" value="{{.From}}">
+<label for="areason">Reason</label><input id="areason" name="reason" maxlength="2000">
+<button type="submit">Archive</button></form>
+<form method="post" action="{{u "/m/" $m.ID.String "/supersede"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{$m.Revision}}"><input type="hidden" name="scope" value="{{.From}}">
+<p class="hint">Creates a replacement memory in this scope. It starts unverified and enters the review queue; approval does not carry over.</p>
+<label for="st">Title</label><input id="st" name="title" value="{{$m.Title}}" maxlength="200" required>
+<label for="sk">Kind</label><select id="sk" name="kind">{{range .Kinds}}<option value="{{.}}"{{if eq (printf "%s" .) (printf "%s" $m.Kind)}} selected{{end}}>{{.}}</option>{{end}}</select>
+<label for="sc">Content</label><textarea id="sc" name="content" rows="8" required>{{$m.Content}}</textarea>
+<label for="sr">Rationale</label><textarea id="sr" name="rationale" rows="3">{{$m.Rationale}}</textarea>
+<label for="ss">Source URI</label><input id="ss" name="source_uri" value="{{$m.SourceURI}}">
+<label for="sreason">Reason</label><input id="sreason" name="reason" maxlength="2000" required>
+<button type="submit">Supersede</button></form>
+</details>
+</section>
+{{end}}
+
+<h2>History</h2>
+{{range .Revisions}}
+<details class="rev"><summary>Revision {{.Revision.Revision}} · {{.Author}} · {{ts .CreatedAt}}{{if .ChangeNote}} · {{first 80 .ChangeNote}}{{end}}{{if .Fields}} · changed: {{join .Fields ", "}}{{end}}</summary>
+{{if .Diff}}<pre class="diff" aria-label="Content changes">{{range .Diff}}<span class="d{{if eq .Op "+"}} add{{else if eq .Op "-"}} del{{end}}">{{.Op}} {{.Text}}
+</span>{{end}}</pre>{{else if .DiffNote}}<p>{{.DiffNote}}</p>{{else if gt .Revision.Revision 1}}<p>Content unchanged.</p>{{else}}<pre class="diff">{{.Content}}</pre>{{end}}
+</details>
+{{end}}
+<h2>Lifecycle</h2>
+<ol class="events">{{range .Events}}<li>{{ts .CreatedAt}} · <strong>{{.Label}}</strong> (revision {{.Revision}}) by {{.Actor}}</li>{{end}}</ol>
+{{end}}
+{{end}}

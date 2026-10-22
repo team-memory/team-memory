@@ -1,0 +1,22 @@
+{{define "content"}}
+{{with .Data}}
+{{if .Error}}<p class="flash err" role="alert">{{.Error}}</p>{{end}}
+{{range .Providers}}
+<form method="post" action="{{u "/login/sso/" .ID}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button type="submit" class="primary">Sign in with {{.DisplayName}}</button>
+</form>
+{{end}}
+{{if .Token}}
+<form method="post" action="{{u "/login/token"}}" class="stack">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<label for="token">Personal access token</label>
+<input id="token" name="token" type="password" autocomplete="off" required maxlength="200">
+<p class="hint">Solo setups, and the owner before connecting SSO, sign in with a token. It is sent once and never stored in the browser.</p>
+<button type="submit" class="primary">Sign in with token</button>
+</form>
+{{end}}
+{{if and (not .Providers) (not .Token)}}<p>Sign-in is not available. Ask an administrator.</p>{{end}}
+{{end}}
+{{end}}

@@ -196,6 +196,8 @@ type SearchResult struct {
 	// ApprovedBy and ApprovedAt are set when Trust is approved.
 	ApprovedBy *uuid.UUID `json:"approved_by,omitempty"`
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+
+	scope uuid.UUID // owning scope, for grouping in listings
 }
 
 // Revision is an immutable content snapshot.

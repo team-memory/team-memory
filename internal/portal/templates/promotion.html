@@ -1,0 +1,28 @@
+{{define "content"}}
+{{with .Data}}
+{{$s := .Req.Snapshot}}
+<p>Status: <span class="badge">{{.Req.Status}}</span> · Destination: {{if .Dest}}<code>{{.Dest.Path}}</code>{{else}}the parent scope{{end}} · Source revision {{$s.Revision}}</p>
+<p class="notice">If accepted, this memory becomes part of the destination and is <strong>inherited by every scope below it</strong>. Lower scopes can still override it. Reviewers here see only the submitted snapshot, not the source scope's history or other memories.</p>
+{{if .Findings}}<p class="flash err" role="alert">Secret scan found possible credentials in: {{range .Findings}}{{.Field}} ({{.Rule}}) {{end}}. Accepting is blocked until the source is fixed.</p>{{else}}<p class="hint">Secret scan: nothing credential-shaped found in the snapshot.</p>{{end}}
+<article class="card"><h2>{{$s.Title}}</h2>
+<p class="meta"><span class="badge kind">{{$s.Kind}}</span> from <code>{{$s.SourceScope}}</code> · submitted by {{$s.SubmittedBy}}, {{ts $s.SubmittedAt}}</p>
+<div class="content">{{md $s.Content}}</div>
+{{if $s.Rationale}}<h3>Rationale</h3><div class="content">{{md $s.Rationale}}</div>{{end}}
+{{if $s.SourceURI}}<p class="meta">Source: {{link $s.SourceURI}}</p>{{end}}
+{{if .Req.Rationale}}<h3>Why promote</h3><div class="content">{{md .Req.Rationale}}</div>{{end}}</article>
+<h2>Audience</h2>
+<p>{{if .Dest}}Readers of <code>{{.Dest.Path}}</code> and of every scope below it will see this memory.{{end}}{{if ge .Members 0}} The destination has {{.Members}} direct member{{if ne .Members 1}}s{{end}}.{{end}}</p>
+{{if eq .Req.Status "pending"}}
+{{if .DestMaint}}
+<form method="post" action="{{u "/promotions/" .Req.ID.String "/accept"}}" class="stack">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<label for="note">Note (optional)</label><input id="note" name="note" maxlength="2000">
+<button class="primary" type="submit"{{if .Findings}} disabled{{end}}>Accept into {{if .Dest}}{{.Dest.Name}}{{else}}destination{{end}}</button>
+</form>
+<form method="post" action="{{u "/promotions/" .Req.ID.String "/reject"}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Reject request</button></form>
+{{end}}
+{{if .Source}}<form method="post" action="{{u "/promotions/" .Req.ID.String "/cancel"}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Cancel request</button></form>{{end}}
+{{end}}
+{{if .Req.ResultMemoryID}}<p><a href="{{u "/m/" .Req.ResultMemoryID.String}}">Open the promoted memory</a></p>{{end}}
+{{end}}
+{{end}}

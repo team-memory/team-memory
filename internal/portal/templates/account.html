@@ -1,0 +1,17 @@
+{{define "content"}}
+{{with .Data}}
+{{if .Error}}<p class="flash err" role="alert">{{.Error}}</p>{{end}}
+<p>Signed in with {{if eq .Method "sso"}}single sign-on{{else}}a personal access token{{end}}.</p>
+<h2>Linked identities</h2>
+{{if .Identities}}<ul>{{range .Identities}}<li><code>{{.Issuer}}</code> · {{ts .LinkedAt}}</li>{{end}}</ul>
+{{else}}<p>No single-sign-on identity is linked to this account.</p>{{end}}
+{{if .Providers}}
+<h2>Connect SSO</h2>
+<p>You will be asked to sign in again at your identity provider, so both identities are proven now. The identity is attached to <strong>this</strong> account; nothing is matched by email, and an identity already linked elsewhere is refused.</p>
+{{range .Providers}}
+<form method="post" action="{{u "/account/link/" .ID}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Connect {{.DisplayName}}</button></form>
+{{end}}
+{{end}}
+<form method="post" action="{{u "/logout"}}"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button type="submit">Sign out</button></form>
+{{end}}
+{{end}}

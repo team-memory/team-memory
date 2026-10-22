@@ -1,0 +1,11 @@
+{{define "content"}}
+{{with .Data}}
+<p><a href="{{scopeURL .Scope.Path}}">← {{.Scope.Name}}</a></p>
+<p>Direct members of this scope. Roles are managed with the operator CLI or API, not in the portal.</p>
+{{if .Members}}
+<table><thead><tr><th>Person</th><th>Role</th><th>Cascades to child scopes</th><th>Source</th></tr></thead><tbody>
+{{range .Members}}<tr><td>{{.DisplayName}}</td><td>{{.Role}}</td><td>{{if .Cascade}}yes{{else}}no{{end}}</td><td>{{.Source}}</td></tr>{{end}}
+</tbody></table>
+{{else}}<p class="empty">No direct members. Access here comes from cascading grants on ancestor scopes.</p>{{end}}
+{{end}}
+{{end}}

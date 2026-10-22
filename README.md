@@ -2,7 +2,7 @@
 
 A self-hosted, permission-aware shared memory for developers and their AI coding agents, served over MCP (Model Context Protocol).
 
-> **Status: early development (stage 04 of 7).** Not production-ready. Row-level security, the review and promotion services and production OAuth are in place; the web portal that completes reviews (stage 05), Helm chart and operations (stage 06) are not. See `proposal.md` for the plan and `docs/handoff/` for progress.
+> **Status: early development (stage 05 of 7).** Not production-ready. Row-level security, the review and promotion services, production OAuth and the web portal (browse, search, review, promote) are in place; the Helm chart and operations (stage 06) are not. See `proposal.md` for the plan and `docs/handoff/` for progress.
 
 This repository holds both the service code and the planning material (`proposal.md`, `review-decisions.md`, `prompts/`).
 

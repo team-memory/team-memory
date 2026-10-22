@@ -72,7 +72,9 @@ func (s *Server) securityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Referrer-Policy", "no-referrer")
+	// same-origin, not no-referrer: Chromium sends "Origin: null" on form
+	// posts under no-referrer, which the Origin check in approve rejects.
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	// form-action must allow the upstream origins: browsers apply it to the
 	// redirect that follows the form submission.
@@ -174,8 +176,12 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 // and hands control back to the authorization server, which redirects to
 // the MCP client with a Team Memory authorization code.
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
-	s.securityHeaders(w)
 	q := r.URL.Query()
+	if IsPortalState(q.Get("state")) && s.portal != nil {
+		s.portal.UpstreamCallback(w, r, r.PathValue("provider"))
+		return
+	}
+	s.securityHeaders(w)
 	pl, perr := s.store.state.takeLogin(r.Context(), hashToken(q.Get("state")))
 	ck, cerr := r.Cookie(loginCookie)
 	if perr != nil || pl.provider != r.PathValue("provider") || cerr != nil ||

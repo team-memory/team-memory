@@ -86,6 +86,16 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("/oauth served while SSO is broken: %d", resp.StatusCode)
 			}
+			for _, path := range []string{"/portal/login", "/portal/", "/portal/s/acme"} {
+				resp, err = http.Get(env.url + path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusServiceUnavailable {
+					t.Fatalf("%s served while SSO is broken: %d", path, resp.StatusCode)
+				}
+			}
 			resp, err = http.Get(env.url + "/.well-known/oauth-protected-resource/mcp")
 			if err != nil {
 				t.Fatal(err)

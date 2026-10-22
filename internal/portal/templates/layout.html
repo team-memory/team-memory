@@ -1,0 +1,51 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} · Team Memory</title>
+<link rel="stylesheet" href="{{u "/static/portal.css"}}">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<a class="brand" href="{{u "/"}}">Team Memory</a>
+{{if .User}}
+<nav aria-label="Main">
+<a href="{{u "/"}}">Scopes</a>
+<a href="{{u "/account"}}">{{.User}}</a>
+</nav>
+<form class="search" role="search" method="get" action="{{u "/search"}}">
+{{if .ScopePath}}<input type="hidden" name="scope" value="{{.ScopePath}}">{{end}}
+<label class="sr" for="q">Search memories</label>
+<input id="q" name="q" type="search" placeholder="Search memories" maxlength="500">
+<button type="submit">Search</button>
+</form>
+{{end}}
+</header>
+<main id="main">
+{{if .Flash}}<p class="flash {{.FlashKind}}" role="status">{{.Flash}}</p>{{end}}
+<h1>{{.Title}}</h1>
+{{template "content" .}}
+</main>
+<footer>{{if .RequestID}}<small>Request ID: <code>{{.RequestID}}</code></small>{{end}}</footer>
+</body>
+</html>{{end}}
+
+{{define "trust"}}<span class="badge trust-{{.}}" title="{{trustLabel .}}">{{if eq (printf "%s" .) "approved"}}Approved{{else if eq (printf "%s" .) "cited"}}Cited · not verified{{else}}Unverified{{end}}</span>{{end}}
+
+{{define "card"}}<article class="card{{if .Inherited}} inherited{{end}}">
+<h3><a href="{{u "/m/" .ID.String}}">{{.Title}}</a></h3>
+<p class="meta">
+<span class="badge kind">{{.Kind}}</span>
+{{template "trust" .Trust}}
+{{if .Inherited}}<span class="badge inh">Inherited · read-only</span>{{end}}
+{{if eq (printf "%s" .Status) "superseded"}}<span class="badge warn">Superseded</span>{{end}}
+{{if eq (printf "%s" .Status) "archived"}}<span class="badge warn">Archived</span>{{end}}
+<span>from <code>{{.OriginScope}}</code></span>
+<span>updated {{ago .UpdatedAt}}</span>
+</p>
+{{if or (eq (printf "%s" .Trust) "unverified") (eq (printf "%s" .Trust) "cited")}}<p class="notice">Agent or contributor proposal. Not reviewed by a maintainer: do not treat as team policy.</p>{{end}}
+<div class="content">{{md (first 400 .Content)}}</div>
+</article>{{end}}

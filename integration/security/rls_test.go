@@ -23,6 +23,7 @@ import (
 var nonTenantTables = []string{
 	"goose_db_version", "principals", "principal_identities", "personal_access_tokens", "embedding_models",
 	"oauth_clients", "oauth_auth_requests", "oauth_codes", "oauth_refresh_tokens", "oauth_pending_logins",
+	"portal_sessions", "portal_login_states",
 }
 
 // TestEveryTenantTableHasForcedRLS enumerates every table in the schema.
@@ -47,7 +48,7 @@ ORDER BY c.relname`)
 		}
 		seen++
 		if slices.Contains(nonTenantTables, name) {
-			if tenantCols && name != "principal_identities" && name != "personal_access_tokens" {
+			if tenantCols && name != "principal_identities" && name != "personal_access_tokens" && name != "portal_sessions" {
 				t.Errorf("%s is listed as non-tenant but has tenant columns", name)
 			}
 			continue

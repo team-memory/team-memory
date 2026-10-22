@@ -1,0 +1,20 @@
+{{define "content"}}
+{{with .Data}}
+<p><a href="{{scopeURL .Scope.Path}}">← {{.Scope.Name}}</a></p>
+<h2>Proposals awaiting review</h2>
+<p>Unverified or cited memories, newest revision each. Approving binds to the exact revision you open.</p>
+{{if .Items}}
+<ul class="queue">{{range .Items}}
+<li><a href="{{u "/m/" .ID.String}}">{{.Title}}</a>
+<span class="badge kind">{{.Kind}}</span> {{template "trust" .Trust}} <span>revision {{.Revision}} by {{.Author}}, {{ago .UpdatedAt}}</span>
+{{if .Requested}}<span class="badge">review requested</span>{{end}}
+{{if .ProposesOverride}}<span class="badge warn">proposes an override</span>{{end}}
+{{if .Conflicts}}<span class="badge warn">{{.Conflicts}} similar in other scopes</span>{{end}}</li>{{end}}
+</ul>
+{{else}}<p class="empty">Nothing is waiting for review.</p>{{end}}
+<h2>Promotion requests to this scope</h2>
+{{if .Promotion}}<ul class="queue">{{range .Promotion}}
+<li><a href="{{u "/promotions/" .ID.String}}">{{.Snapshot.Title}}</a> <span class="badge">{{.Status}}</span> from <code>{{.Snapshot.SourceScope}}</code>, submitted by {{.Snapshot.SubmittedBy}}</li>{{end}}</ul>
+{{else}}<p class="empty">No promotion requests. When a child scope's maintainer promotes an approved memory here, it appears in this list for a maintainer of this scope to accept or reject.</p>{{end}}
+{{end}}
+{{end}}

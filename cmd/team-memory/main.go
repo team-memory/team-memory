@@ -31,6 +31,7 @@ import (
 
 	"github.com/team-memory/team-memory/internal/auth"
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/portal"
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
 	"github.com/team-memory/team-memory/internal/server"
@@ -165,6 +166,35 @@ func env(key, def string) string {
 	return def
 }
 
+// portalConfig reads the TEAM_MEMORY_PORTAL_* settings and rejects values
+// that would otherwise silently fall back to a default.
+func portalConfig() (cfg portal.Config, disabled bool, err error) {
+	switch v := os.Getenv("TEAM_MEMORY_PORTAL"); v {
+	case "", "on":
+	case "off":
+		disabled = true
+	default:
+		return cfg, false, fmt.Errorf("TEAM_MEMORY_PORTAL=%q must be on or off", v)
+	}
+	cfg = portal.Config{BasePath: env("TEAM_MEMORY_PORTAL_BASE_PATH", "/portal"), TokenSignIn: env("TEAM_MEMORY_PORTAL_TOKEN_SIGNIN", "auto"),
+		CSPExtra: os.Getenv("TEAM_MEMORY_PORTAL_CSP_EXTRA")}
+	for name, dst := range map[string]*time.Duration{"TEAM_MEMORY_PORTAL_IDLE_TIMEOUT": &cfg.IdleTimeout, "TEAM_MEMORY_PORTAL_ABSOLUTE_TIMEOUT": &cfg.AbsoluteTimeout} {
+		if v := os.Getenv(name); v != "" {
+			d, perr := time.ParseDuration(v)
+			if perr != nil || d <= 0 {
+				return cfg, false, fmt.Errorf("%s=%q is not a positive duration such as 30m", name, v)
+			}
+			*dst = d
+		}
+	}
+	for _, s := range strings.Split(os.Getenv("TEAM_MEMORY_PORTAL_SOURCE_SCHEMES"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			cfg.SourceSchemes = append(cfg.SourceSchemes, s)
+		}
+	}
+	return cfg, disabled, cfg.Validate()
+}
+
 func serve(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listen := fs.String("listen", env("TEAM_MEMORY_LISTEN", "127.0.0.1:8080"), "listen address")
@@ -186,6 +216,10 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	pcfg, pdisabled, err := portalConfig()
+	if err != nil {
+		return err
+	}
 	guard := &postgres.TxGuard{Logger: logger}
 	return withRuntimePool(ctx, "TEAM_MEMORY_APP_DATABASE_URL", postgres.RoleApp, guard, func(pool *pgxpool.Pool) error {
 		srch, err := newSearch(ctx, pool, logger)
@@ -196,6 +230,7 @@ func serve(ctx context.Context, args []string) error {
 			Pool: pool, Search: srch, Logger: logger, DefaultScope: *defaultScope,
 			SSOConfigPath: os.Getenv("TEAM_MEMORY_SSO_CONFIG"), PublicURL: os.Getenv("TEAM_MEMORY_PUBLIC_URL"),
 			RatePerSecond: rate, RateBurst: burst,
+			Portal: pcfg, DisablePortal: pdisabled,
 		})
 		handler.Start(ctx)
 		srv := &http.Server{Addr: *listen, Handler: logRequests(logger, handler), ReadHeaderTimeout: 10 * time.Second,

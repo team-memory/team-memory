@@ -243,6 +243,28 @@ type PersonalAccessToken struct {
 	LastUsedAt  *time.Time
 }
 
+type PortalLoginState struct {
+	StateHash   string
+	Provider    string
+	Purpose     string
+	Nonce       string
+	Verifier    string
+	BrowserHash string
+	SessionHash *string
+	ExpiresAt   time.Time
+}
+
+type PortalSession struct {
+	IDHash      string
+	PrincipalID uuid.UUID
+	CsrfToken   string
+	Method      string
+	CreatedAt   time.Time
+	LastSeenAt  time.Time
+	ExpiresAt   time.Time
+	RevokedAt   *time.Time
+}
+
 type Principal struct {
 	ID          uuid.UUID
 	Kind        string

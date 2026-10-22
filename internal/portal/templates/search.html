@@ -1,0 +1,34 @@
+{{define "content"}}
+{{with .Data}}
+{{if not .Scope}}<p class="empty">Join a scope to search its memories.</p>{{else}}
+<form method="get" class="filters" action="{{u "/search"}}">
+<input type="hidden" name="scope" value="{{.Scope}}">
+<label>Search <input name="q" type="search" value="{{.Query}}" maxlength="500"></label>
+<label>Mode <select name="mode"><option value="hybrid"{{if eq .Mode "hybrid"}} selected{{end}}>Hybrid</option><option value="fulltext"{{if eq .Mode "fulltext"}} selected{{end}}>Full-text</option><option value="vector"{{if eq .Mode "vector"}} selected{{end}}>Meaning only</option></select></label>
+<label>Kind <select name="kind"><option value="">Any</option>{{range .Kinds}}<option value="{{.}}"{{if eq (printf "%s" .) $.Data.Kind}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label><input type="checkbox" name="overridden" value="1"> Include overridden</label>
+<button type="submit">Search</button>
+</form>
+<p>Searching <code>{{.Scope}}</code> and the scopes above it.</p>
+{{if .Ran}}
+{{if .Resp.Meta.Vector.Status}}<p class="hint">Retrieval: {{.Resp.Meta.Mode}}{{if ne .Resp.Meta.Vector.Status "ok"}} ({{.Resp.Meta.Vector.Status}}){{end}}.{{if .Resp.Meta.OverridesInEffect}} {{.Resp.Meta.OverridesInEffect}} inherited memories are hidden by approved overrides.{{end}}</p>{{end}}
+{{if .Resp.Results}}
+{{range .Resp.Results}}
+<article class="card{{if .Inherited}} inherited{{end}}">
+<h3><a href="{{u "/m/" .ID.String}}?scope={{$.Data.Scope}}">{{.Title}}</a></h3>
+<p class="meta"><span class="badge kind">{{.Kind}}</span> {{template "trust" .Trust}}
+{{if .Inherited}}<span class="badge inh">Inherited · read-only</span>{{end}}
+{{if .OverriddenBy}}<span class="badge warn">Overridden at a lower scope</span>{{end}}
+<span>from <code>{{.OriginScope}}</code></span> <span>by {{nm $.Data.Names .CreatedBy}}</span>
+{{if .ApprovedBy}}<span>approved by {{nm $.Data.Names .ApprovedBy}}</span>{{end}}
+<span>updated {{ago .UpdatedAt}}</span> <span title="Rank-based, comparable only within this list">score {{printf "%.2f" .Score}}</span></p>
+{{if .SourceURI}}<p class="meta">Source: {{link .SourceURI}}</p>{{end}}
+<div class="content">{{md (first 500 .Content)}}</div>
+{{range index $.Data.Similar .ID}}<p class="override-note">Similar inherited memory: <a href="{{u "/m/" .Other.ID.String}}">{{.Other.Title}}</a> from <code>{{.Other.OriginScope}}</code> (similarity {{printf "%.2f" .Similarity}}). Lower scopes win only through an approved override: open the memory to propose one.</p>{{end}}
+</article>
+{{end}}
+{{else}}<p class="empty">No memories matched.</p>{{end}}
+{{end}}
+{{end}}
+{{end}}
+{{end}}

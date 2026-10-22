@@ -35,6 +35,7 @@ import (
 	"github.com/team-memory/team-memory/internal/auth"
 	"github.com/team-memory/team-memory/internal/auth/oauth"
 	"github.com/team-memory/team-memory/internal/memory"
+	portalpkg "github.com/team-memory/team-memory/internal/portal"
 	"github.com/team-memory/team-memory/internal/server"
 )
 
@@ -183,7 +184,7 @@ func newSSOEnv(t *testing.T, edit func(cfg map[string]any, secretPath string)) *
 
 	env.handler = server.New(server.Options{
 		Pool: env.tr.pool, Search: env.tr.search, SSOConfigPath: env.configPath, PublicURL: env.url,
-		OAuth: oauth.Options{MetadataClient: cimdClient},
+		OAuth: oauth.Options{MetadataClient: cimdClient}, Portal: ssoPortalConfig,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -197,6 +198,9 @@ func newSSOEnv(t *testing.T, edit func(cfg map[string]any, secretPath string)) *
 // cimdClient fetches client metadata documents in tests, where they are
 // served from loopback TLS servers. Set per test.
 var cimdClient *http.Client
+
+// ssoPortalConfig configures the portal of servers newSSOEnv starts.
+var ssoPortalConfig portalpkg.Config
 
 func (e *ssoEnv) waitReady(t *testing.T) {
 	t.Helper()

@@ -1,0 +1,12 @@
+{{define "content"}}
+{{with .Data}}
+{{if .Scopes}}
+<p>Your scopes. Memories flow <strong>down</strong>: a scope shows its own memories and, read-only, those of the scopes above it. Nothing flows up unless a maintainer approves a promotion.</p>
+<nav aria-label="Scope tree"><ul class="tree">
+{{range .Scopes}}<li class="depth-{{.Depth}}"><a href="{{scopeURL .Path}}">{{.Name}}</a> <span class="badge">{{.Level}}</span> <code class="path">{{.Path}}</code></li>{{end}}
+</ul></nav>
+{{else}}
+<p class="empty">You are not a member of any scope yet. A <em>scope</em> is a place where a team keeps shared knowledge (an organization, a team, a project). Ask a maintainer to add you; you will then see that scope's memories and everything inherited from the scopes above it.</p>
+{{end}}
+{{end}}
+{{end}}

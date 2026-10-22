@@ -4,7 +4,7 @@ TEST_DATABASE_URL ?= postgres://teammemory:teammemory-dev@127.0.0.1:55432/postgr
 SQLC_VERSION := v1.31.1
 export DATABASE_URL TEST_DATABASE_URL
 
-.PHONY: help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
+.PHONY: test-e2e help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ worker: build ## Run the embedding worker as tm_worker (needs TEAM_MEMORY_OLLAMA
 
 test-security: db-up ## Adversarial security suite only
 	go test -race -count=1 ./integration/security/
+
+test-e2e: db-up ## Portal browser tests in Chromium (first: cd e2e && npm ci && npx playwright install chromium)
+	TEAM_MEMORY_E2E=1 go test -count=1 -v -run TestPortalBrowserEndToEnd ./integration/security/
 
 test-unit: ## Unit tests only (no database)
 	go test ./internal/... ./cmd/...

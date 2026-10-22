@@ -1,6 +1,6 @@
 # Threat model
 
-Status: stage 04 (2026-10-21). Covers the MCP service, OAuth facade, database and worker as built through stage 04. The portal (stage 05) and the git mirror and deployment (stage 06) add surfaces that their stages must model; their requirements from this model are listed at the end.
+Status: stage 05 (2026-10-22). Covers the MCP service, OAuth facade, database, worker and web portal as built through stage 05. The git mirror and deployment (stage 06) add surfaces that their stages must model; their requirements from this model are listed at the end.
 
 ## Assets
 
@@ -49,12 +49,19 @@ Status: stage 04 (2026-10-21). Covers the MCP service, OAuth facade, database an
 | T17 | Denial of service: large bodies, request floods, OAuth endpoint abuse, audit amplification | Body/header limits and timeouts; per-principal and per-address rate limits; capped pending state; rate-limited failure audit | `TestRequestLimits`, `internal/ratelimit` tests |
 | T18 | SSRF through client metadata documents | Public-address-only fetcher, size and time limits, optional host allowlist | stage 03 tests |
 | T19 | Mix-up and code injection in OAuth | PKCE S256 required; RFC 8707 resource binding; RFC 9207 `iss` in authorization responses; loopback-only redirects by default; per-client consent with CSRF | stage 03 tests, `addIssuer` |
+| T20 | Stored XSS through memory content, rationale, titles, `source_uri`, scope names | Output escaping by construction (`internal/portal/render.go`); no raw HTML; link scheme allowlist; images never loaded; `default-src 'none'` CSP without scripts; `nosniff`; frame denial | `TestMarkdownNeutralizesHostileInput`, `TestPortalStoredXSS`, Playwright CSP test (browser refuses an injected inline script) |
+| T21 | CSRF on state-changing portal requests, including login CSRF | Per-session CSRF token in every form; `Origin` and `Sec-Fetch-Site` checks; `SameSite=Lax` cookie; pre-session token for sign-in forms | `TestPortalCSRF` (every POST: no token, wrong token, other origin, cross-site, another session's token) |
+| T22 | Session fixation, theft by database read, reuse after logout, stale sessions | Server-generated ids only; new id and revocation of the old at login; ids stored hashed; idle and absolute timeouts; disabled principal ends the session | `TestPortalSessions` |
+| T23 | Hidden scope or memory revealed by portal pages, counts, errors, search, autocomplete | Services only, under RLS; 404 page identical for hidden and nonexistent; counts computed from the visible set; no descendant aggregation | `TestPortalHierarchyVisibility`, `TestPortal404IsIndistinguishable`, `TestPortalEndpointsHierarchy` |
+| T24 | Account takeover through Connect SSO or portal SSO sign-in (email match, replayed callback, callback in another browser, stale upstream login, identity linked elsewhere) | `(issuer, subject)` mapping only; single-use browser-bound state; `prompt=login` and an `auth_time` freshness check; `Identities.Link` refuses linked identities; link needs a live portal session | `TestPortalConnectSSO`, `TestPortalSSOSignIn` |
+| T25 | Promotion or approval of a revision the reviewer did not see | Forms carry the exact revision and state version; conflicts are reported, not applied; consent checkbox required for sharing the snapshot | `TestPortalApproveFlow`, `TestPortalPromotion` |
+| T26 | Credential entered at the portal ends up in a URL, log or browser storage | Token posted in the body once; never echoed; no local storage; request log has paths without queries for sign-in | `TestPortalSessions` ("bad tokens and cookie flags") |
 
 ## Residual risks
 
 1. **Prompt injection is reduced, not eliminated.** Framing, trust levels and agent policy depend on the model and client honouring them. A memory can still mislead an agent that ignores the notice, and approved memories are trusted more, so a rogue or careless maintainer's approval is effective. Agents should verify against the repository; the policy says so but cannot enforce it.
 2. **SQL execution in `serve` defeats RLS by impersonation.** The app role sets `app.principal_id` and `app.auth_method` itself (`TestIdentityVariableIsTheTrustBoundary`). Mitigated only by having no dynamic SQL and by the role's limited privileges. A compromised `serve` process can also forge audit rows attributed to any principal.
-3. **The "browser review" boundary is a workflow marker,** not proof of a human: browser automation with a maintainer's session can approve. The portal's CSRF protection and session design (stage 05) determine its strength.
+3. **The "browser review" boundary is a workflow marker,** not proof of a human: browser automation with a maintainer's session can approve. The portal's CSRF tokens, `Origin` checks and server-side sessions (stage 05) make a cross-site forgery fail, but malware or an XSS-free hostile extension in the maintainer's own browser can still approve. There is no step-up re-authentication for approvals.
 4. **Secret scanning is pattern-based.** Novel formats, split secrets and encoded secrets pass. Detection happens after the agent saw the secret.
 5. **Identity tables are global.** The app role can list principals' display names and see token hashes (not tokens).
 6. **Rate limits are per process** and keyed by the TCP peer address. Behind a proxy without trusted forwarding headers, OAuth limits are shared by all clients.
@@ -63,10 +70,16 @@ Status: stage 04 (2026-10-21). Covers the MCP service, OAuth facade, database an
 9. **Signing keys reload only on restart** (documented rotation procedure). There is no automated key generation or rotation.
 10. **Operators and database administrators are fully trusted,** including with mirror repositories.
 11. **Single organization per deployment** for SSO providers; per-org provider configuration is deferred.
-12. **No third-party review yet.** All tests here were written by the implementer.
+12. **Portal specifics (stage 05).**
+    - Sign-in attempt limits are keyed by TCP peer; behind an ingress without trusted forwarding, they are shared by everyone using the ingress.
+    - Token sign-in shows an error that distinguishes "wrong token" from "linked to SSO" only after a valid token, so it reveals nothing to someone without one.
+    - Session rows are not purged instantly at expiry; a sweep runs every 10 minutes (expired rows cannot be used meanwhile).
+    - The markdown renderer is hand-written and covers a small subset; unusual syntax renders as escaped text, never as markup.
+    - Browser-level behaviour was verified in Chromium only.
+13. **No third-party review yet.** All tests here were written by the implementer.
 
 ## Requirements carried to later stages
 
-- **Stage 05 (portal):** set `AuthMethod = portal` only for a cookie session with CSRF protection and re-authentication appropriate to review; sanitize rendered content (stored XSS) with a strict CSP; implement Connect SSO with `upstream.authCodeURL(..., forceLogin=true)` and `Identities.LinkFromPortal`; extend the hierarchy and cross-tenant tests to every portal API.
+- **Stage 05 (portal):** done as T20 to T26 above. Not done: step-up re-authentication for approvals.
 - **Stage 06 (operations):** export worker role and secret gate per `docs/decisions/mirror-security.md`; purge runbook; trusted proxy configuration for rate limits; Kubernetes Secrets for database login passwords; key rotation runbook.
 - **Before public release:** third-party penetration test and code review of `migrations/00003_security.sql`, `internal/auth`, and the promotion definer function.

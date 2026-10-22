@@ -1,0 +1,7 @@
+{
+  "name": "team-memory-portal-e2e",
+  "private": true,
+  "description": "Browser end-to-end tests for the Team Memory portal. Run through `make test-e2e`, which starts a seeded server.",
+  "scripts": { "test": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.55.0" }
+}

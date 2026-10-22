@@ -326,3 +326,33 @@ func (a *FailureAuditor) RecordSignIn(ctx context.Context, principal uuid.UUID, 
 		a.logger.Error("audit sign-in", "err", err)
 	}
 }
+
+// ExternalIdentityResult is the outcome of mapping an upstream identity.
+type ExternalIdentityResult struct {
+	Principal memory.Principal
+	Created   bool
+}
+
+// LinkedIdentity is an external identity attached to a principal.
+type LinkedIdentity struct {
+	Issuer string
+	// Subject is shown shortened by callers; it is an opaque IdP value.
+	Subject  string
+	LinkedAt time.Time
+}
+
+// List returns the identities linked to a principal.
+func (s *Identities) List(ctx context.Context, principal uuid.UUID) ([]LinkedIdentity, error) {
+	var out []LinkedIdentity
+	err := postgres.WithTx(ctx, s.pool, uuid.Nil, func(tx postgres.Tx) error {
+		rows, err := tx.Q.ListPrincipalIdentities(ctx, principal)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			out = append(out, LinkedIdentity{Issuer: r.Issuer, Subject: r.Subject, LinkedAt: r.CreatedAt})
+		}
+		return nil
+	})
+	return out, err
+}

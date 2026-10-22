@@ -69,6 +69,7 @@ type Server struct {
 	identities      *auth.Identities
 	verifier        *AccessTokens
 	audit           *auth.FailureAuditor
+	portal          PortalCallback
 	limiter         *ratelimit.Limiter
 	logger          *slog.Logger
 	now             func() time.Time

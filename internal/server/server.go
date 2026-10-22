@@ -20,6 +20,7 @@ import (
 	"github.com/team-memory/team-memory/internal/auth/oauth"
 	"github.com/team-memory/team-memory/internal/mcp"
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/portal"
 	"github.com/team-memory/team-memory/internal/ratelimit"
 	"github.com/team-memory/team-memory/internal/search"
 )
@@ -44,12 +45,16 @@ type Options struct {
 	RateBurst     int
 	// MaxBodyBytes caps MCP request bodies (default mcp.DefaultMaxBodyBytes).
 	MaxBodyBytes int64
+	// Portal configures the web portal. DisablePortal turns it off.
+	Portal        portal.Config
+	DisablePortal bool
 }
 
 // Server is the assembled handler.
 type Server struct {
 	handler http.Handler
 	sso     *oauth.Server
+	portal  *portal.Portal
 	ready   *readiness
 }
 
@@ -103,6 +108,33 @@ func New(opts Options) *Server {
 	} else if opts.SSOConfigPath != "" {
 		mux.Handle("/oauth/", s.ready.gate(http.NotFoundHandler()))
 		mux.Handle("/.well-known/", s.ready.gate(http.NotFoundHandler()))
+	}
+	if !opts.DisablePortal {
+		pcfg := opts.Portal
+		if pcfg.PublicURL == "" {
+			pcfg.PublicURL = opts.PublicURL
+		}
+		popts := portal.Options{Config: pcfg, Pool: opts.Pool, Memory: svc, Search: opts.Search,
+			Identities: auth.NewIdentities(opts.Pool), PATs: pats, Failures: failures, Logger: opts.Logger}
+		if s.sso != nil {
+			popts.SSO = s.sso
+		}
+		pt, err := portal.New(popts)
+		if err != nil {
+			opts.Logger.Error("portal disabled: invalid configuration", "err", err)
+		} else {
+			pm := http.NewServeMux()
+			pt.Register(pm)
+			prefix := pt.BasePath() + "/"
+			mux.Handle(prefix, s.ready.gate(pm))
+			if pt.BasePath() != "" {
+				mux.Handle(pt.BasePath(), s.ready.gate(pm))
+			}
+			s.portal = pt
+			if s.sso != nil {
+				s.sso.SetPortal(pt)
+			}
+		}
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /readyz", s.ready.serve)
@@ -167,6 +199,9 @@ func buildSSO(opts Options) (*oauth.Server, error) {
 func (s *Server) Start(ctx context.Context) {
 	if s.sso != nil {
 		s.sso.Start(ctx)
+	}
+	if s.portal != nil {
+		s.portal.Start(ctx)
 	}
 }
 

@@ -1,0 +1,53 @@
+{{define "content"}}
+{{with .Data}}
+<p class="crumbs" aria-label="Scope path">{{range .Page.Ancestors}}<span>{{.Name}}</span> › {{end}}<strong>{{.Page.Scope.Name}}</strong> <span class="badge">{{.Page.Scope.Level}}</span> <span class="badge">your role: {{.Page.Role}}</span></p>
+<p class="actions">
+<a href="{{u "/search"}}?scope={{.Page.Scope.Path}}">Search here</a>
+{{if .CanReview}} · <a href="{{u "/review/" .Page.Scope.Path}}">Review queue</a> · <a href="{{u "/members/" .Page.Scope.Path}}">Members</a>{{end}}
+</p>
+<form method="get" class="filters" action="{{scopeURL .Page.Scope.Path}}">
+<input type="hidden" name="tab" value="{{.Tab}}">
+<label>Kind <select name="kind"><option value="">Any</option>{{range .Kinds}}<option value="{{.}}"{{if eq (printf "%s" .) $.Data.Filter.Kind}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<label>Trust <select name="trust"><option value="">Any</option>
+<option value="unverified"{{if eq $.Data.Filter.Trust "unverified"}} selected{{end}}>Unverified</option>
+<option value="cited"{{if eq $.Data.Filter.Trust "cited"}} selected{{end}}>Cited</option>
+<option value="approved"{{if eq $.Data.Filter.Trust "approved"}} selected{{end}}>Approved</option></select></label>
+<label>Status <select name="status"><option value="">Active</option>
+<option value="superseded"{{if eq $.Data.Filter.Status "superseded"}} selected{{end}}>Superseded</option>
+<option value="archived"{{if eq $.Data.Filter.Status "archived"}} selected{{end}}>Archived</option></select></label>
+<label>Updated from <input type="date" name="since" value="{{$.Data.Filter.Since}}"></label>
+<label>to <input type="date" name="until" value="{{$.Data.Filter.Until}}"></label>
+<button type="submit">Filter</button>
+</form>
+<div class="tabs" role="tablist">
+<a role="tab" aria-selected="{{if eq .Tab "own"}}true{{else}}false{{end}}" href="?tab=own&amp;kind={{.Filter.Kind}}&amp;trust={{.Filter.Trust}}&amp;status={{.Filter.Status}}&amp;since={{.Filter.Since}}&amp;until={{.Filter.Until}}">This scope's memories ({{.OwnCount}})</a>
+<a role="tab" aria-selected="{{if eq .Tab "inherited"}}true{{else}}false{{end}}" href="?tab=inherited&amp;kind={{.Filter.Kind}}&amp;trust={{.Filter.Trust}}&amp;status={{.Filter.Status}}&amp;since={{.Filter.Since}}&amp;until={{.Filter.Until}}">Inherited from ancestors ({{.InhCount}})</a>
+</div>
+{{if and (eq .Tab "own") .Page.OwnTruncated}}<p class="hint">Showing the most recent {{.Limit}} matches. Narrow the filters to see others.</p>{{end}}
+{{if and (eq .Tab "inherited") .Page.InheritedTruncated}}<p class="hint">Showing the most recent {{.Limit}} inherited matches. Narrow the filters to see others.</p>{{end}}
+{{if eq .Tab "own"}}
+{{if .Page.Own}}
+{{range .Page.Own}}
+{{template "card" .}}
+{{with index $.Data.Overrides .ID}}
+<div class="override-note"><p>Overrides {{len .}} inherited memor{{if eq (len .) 1}}y{{else}}ies{{end}} here: lowest scope wins.</p>
+<details {{if $.Data.ShowOver}}open{{end}}><summary>Show overridden</summary>
+<ul>{{range .}}<li>{{.Memory.Title}} <span class="badge inh">from {{.Memory.OriginScope}}</span></li>{{end}}</ul></details></div>
+{{end}}
+{{end}}
+{{else}}<p class="empty">This scope has no memories matching these filters. A scope's own memories are written here by its members and agents; they start unverified until a maintainer approves them. Memories from the scopes above are on the <a href="?tab=inherited">Inherited</a> tab.</p>{{end}}
+{{else}}
+<p class="hint">Inherited memories come from the scopes above this one. They are read-only here and apply to this scope unless a lower scope overrides them.
+{{if .Hidden}} {{.Hidden}} hidden because an approved memory in a lower scope overrides {{if eq .Hidden 1}}it{{else}}them{{end}}: lowest scope wins.
+<a href="?tab=inherited&amp;overridden=1">Show overridden</a>{{end}}
+{{if .ShowOver}} <a href="?tab=inherited">Hide overridden</a>{{end}}</p>
+{{range .Page.Inherited}}
+<section><h2>From <code>{{.Scope.Path}}</code> <span class="badge">{{.Scope.Level}}</span></h2>
+{{range .Memories}}
+{{template "card" .}}
+{{with index $.Data.Overridden .ID}}<p class="override-note">Overridden at <code>{{.By.OriginScope}}</code>: lowest scope wins. See <a href="{{u "/m/" .By.ID.String}}">{{.By.Title}}</a>.</p>{{end}}
+{{end}}</section>
+{{else}}<p class="empty">Nothing is inherited here. Either this is a top-level scope, or the scopes above have no memories matching these filters.</p>{{end}}
+{{end}}
+{{end}}
+{{end}}
