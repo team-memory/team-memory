@@ -18,4 +18,4 @@ We want Team Memory to be a place where people can contribute without being hara
 
 This applies to the project's repositories, issues, pull requests and discussions, and to people representing the project in public. Maintainers may edit or remove contributions that violate it and may restrict participation.
 
-Report concerns to the conduct contact in `SECURITY.md` (placeholder until the maintainer sets one), marked "conduct". Reports are handled privately where possible.
+Report concerns by email to `tyler@lafronz.com` with "team-memory conduct" in the subject. Reports are handled privately where possible.

@@ -1,16 +1,16 @@
 # Stage 06: Operational Hardening
 
 ## Objective
-Make Team Memory deployable and operable: container image, Helm chart for Kubernetes (MicroK8s first), PostgreSQL backup and restore proof, observability, load tests against the stated targets, and a staged rollout with rollback.
+Make Team Memory deployable and operable: container image, Helm chart for Kubernetes, PostgreSQL backup and restore proof, observability, load tests against the stated targets, and a staged rollout with rollback.
 
 ## Context
-Team Memory is an open-source Go MCP service plus embedding worker on PostgreSQL 17 + pgvector (see `proposal.md`). Initial deployment target: the author's MicroK8s cluster with Traefik ingress and a private Tailscale-reachable hostname; the repo itself must stay generic (placeholder hostnames like `memory.example.com`). Initial sizing assumptions (not measured): API 2 replicas, 250m CPU / 256Mi each; worker 1 replica, 250m / 256Mi; dedicated Postgres storage. Initial engineering targets to validate: search p95 < 500 ms (warm, excluding query embedding), write p95 < 300 ms (excluding async embedding), RPO 15 min, RTO 2 h, 99.9% availability target.
+Team Memory is an open-source Go MCP service plus embedding worker on PostgreSQL 17 + pgvector (see `proposal.md`). Initial deployment target: a small Kubernetes cluster with Traefik ingress and a private hostname; the repo itself must stay generic (placeholder hostnames like `memory.example.com`). Initial sizing assumptions (not measured): API 2 replicas, 250m CPU / 256Mi each; worker 1 replica, 250m / 256Mi; dedicated Postgres storage. Initial engineering targets to validate: search p95 < 500 ms (warm, excluding query embedding), write p95 < 300 ms (excluding async embedding), RPO 15 min, RTO 2 h, 99.9% availability target.
 
 ## Inputs
 - `prompts/00-start-here.md` (attach; follow its global rules and completion gates).
 - `review-decisions.md` (attach with the proposal; required accepted security/lifecycle decisions).
 - `proposal.md`, `docs/handoff/04-security.md`, `docs/handoff/05-portal.md` (attach) and earlier handoffs as needed. Ask if missing.
-- The repository root (`/Users/tyler/Documents/projects/memory/team-memory/`), which holds both the service code and these planning files.
+- The repository root (the repository root), which holds both the service code and these planning files.
 - `docs/decisions/mirror-security.md` from stage 04, and from the user the private git remote(s) to use for the mirror (a throwaway local bare repo is fine for tests; do not push to any real remote without explicit confirmation).
 - From the user, if deploying to a real cluster: kubeconfig context name, ingress class, storage class, and Ollama endpoint. Do not assume access; do not deploy to any real cluster without explicit user confirmation in this session.
 
@@ -40,7 +40,7 @@ New product features; client verification (stage 07); public release.
 `Dockerfile`, `internal/mirror`, mirror verification/recovery tooling and tests, `docs/decisions/git-library.md`, Helm chart with `values.yaml` and a README, backup configuration and restore-drill report, dashboards/alerts examples, load-test scripts and report (`docs/operations/load-test-report.md`), runbooks, `docs/handoff/06-operations.md`.
 
 ## Acceptance criteria
-- `helm lint` and `helm template` succeed; a deploy to a local or disposable cluster (e.g. kind or the user's MicroK8s only after explicit confirmation) reaches ready state and passes a smoke test through the ingress.
+- `helm lint` and `helm template` succeed; a deploy to a local or disposable cluster (e.g. kind or the user's own cluster only after explicit confirmation) reaches ready state and passes a smoke test through the ingress.
 - go-git is the only git implementation used (no `exec` of `git` anywhere in the service; checked by a grep or lint rule), and `docs/decisions/git-library.md` records the pinned version, license check, and any limits found.
 - Creating, updating, approving, and superseding a memory each produce one correct commit in a test mirror repo; a forced push failure retries without duplicates; `verify-mirror` reports no drift afterward and detects a deliberately introduced one.
 - A restore drill succeeded with measured duration and recovery point documented.

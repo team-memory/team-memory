@@ -15,7 +15,7 @@ Team Memory is now deployable and operable:
 - **Rollout and rollback**: drilled with a request probe.
 - **Docs**: an authentication deployment guide followed literally in solo and SSO mode, and runbooks.
 
-Everything was exercised on a **disposable k3d cluster** created for this stage (`deploy/dev-k3d/`). The author's MicroK8s cluster was **not** touched; no real git remote was used; nothing was pushed or published.
+Everything was exercised on a **disposable k3d cluster** created for this stage (`deploy/dev-k3d/`). No real cluster was touched; no real git remote was used; nothing was pushed or published.
 
 ## Acceptance criteria
 
@@ -125,7 +125,7 @@ During this, three defects were found and fixed:
 7. **Rate limits are per replica** and the portal sign-in limit is per client address; with `trustedProxies` set, that address is the real client.
 8. **NetworkPolicy admission lag**: kube-router admitted a new pod's traffic to podSelector-protected peers 1–3 s after start; `helm test` retries. Other CNIs may differ.
 9. **Not done**:
-   - no deploy to MicroK8s (needs explicit confirmation and the values noted in `deploy.md`);
+   - no deploy to a real cluster (needs explicit confirmation and the values noted in `deploy.md`);
    - no real git host (GitHub/GitLab) or hosted IdP (Google/Entra recipes are written from current official docs but untested);
    - no S3 backup repository or encryption in the drill (POSIX repository);
    - no point-in-time restore to an earlier time (latest only);

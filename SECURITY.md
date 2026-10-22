@@ -4,9 +4,9 @@
 
 Please do not open a public issue for a security problem.
 
-**Contact: `<SECURITY_CONTACT: to be set by the maintainer before publishing>`**
+**Contact:** use GitHub's private vulnerability reporting on this repository (Security tab, "Report a vulnerability"), or email `tyler@lafronz.com` with "team-memory security" in the subject.
 
-Once the repository is public, prefer GitHub's private vulnerability reporting ("Security" tab, "Report a vulnerability") if the maintainer has enabled it. Include affected version or commit, reproduction steps, and impact. Do not include real credentials or other people's data.
+Include affected version or commit, reproduction steps, and impact. Do not include real credentials or other people's data.
 
 This is a single-maintainer, pre-release project. There is no commercial support or guaranteed response time; the maintainer aims to acknowledge reports within a week.
 

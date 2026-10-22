@@ -9,3 +9,9 @@ annotations:
 home: https://github.com/team-memory/team-memory
 keywords: [mcp, memory, ai-agents, pgvector]
 kubeVersion: ">=1.27.0-0"
+icon: https://raw.githubusercontent.com/team-memory/team-memory/main/docs/assets/logo.svg
+sources:
+  - https://github.com/team-memory/team-memory
+maintainers:
+  - name: Tyler La Fronz
+    url: https://github.com/team-memory

@@ -31,9 +31,10 @@ Evidence only, as of 2026-10-22 on `main`. "Done" means a command or document in
 
 ## Release hygiene
 - [x] LICENSE (Apache 2.0), NOTICE, README, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, CHANGELOG, issue/PR templates, versioning policy, CI extension.
-- [ ] SECURITY.md contact: placeholder, needs the maintainer's choice.
-- [ ] Module path `github.com/team-memory/team-memory` is a placeholder.
-- [ ] Decide whether `prompts/`, `proposal.md`, `review*.md` ship publicly.
+- [x] SECURITY.md and CODE_OF_CONDUCT contact set (GitHub private reporting, or the author's public email).
+- [x] Module path matches the intended repository URL.
+- [x] Planning documents ship publicly; local paths and personal-cluster references removed (`docs/verification/repo-audit.md`).
+- [x] Helm chart: strict lint, `values.schema.json`, icon and metadata, OCI install docs, tag-triggered release workflow (`.github/workflows/release.yml`; inert until a `v*.*.*` tag is pushed). Never installed from the OCI registry: no release exists yet.
 - [ ] Landscape refresh (`docs/landscape.md` is from stage 01; not refreshed): needs cited web research.
 - [ ] Private pilot on a real project: not started (`docs/verification/private-pilot.md`).
 
@@ -41,4 +42,4 @@ Evidence only, as of 2026-10-22 on `main`. "Done" means a command or document in
 29 Apache-2.0, 21 BSD-3, 2 BSD-2, 19 MIT, 1 Unlicense; MPL-2.0 (`filepath-securejoin`, file-level) and MIT-0 (`segmentio/asm`) confirmed from module LICENSE files. No GPL/AGPL.
 
 ## Recommendation: NO-GO
-Required cross-client verification and the pilot are not done. Everything buildable without the user is done and green.
+Required cross-client verification is not done (the author will test Codex later), and the author's own-project pilot has not started. Everything else buildable without a live cluster is done and green.

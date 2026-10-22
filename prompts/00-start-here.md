@@ -16,7 +16,7 @@ Each prompt in this folder has a defined input bundle and is written for a fresh
 
 ## Where things live
 
-- One repository holds everything: `/Users/tyler/Documents/projects/memory/team-memory/` (also reachable as `~/projects/memory/team-memory`). Planning artifacts (`proposal.md`, `review*.md`, `prompts/`) and the service code (`cmd/`, `internal/`, `migrations/`, ...) live side by side at its root.
+- One repository holds everything: Planning artifacts (`proposal.md`, `review*.md`, `prompts/`) and the service code (`cmd/`, `internal/`, `migrations/`, ...) live side by side at its root.
 - Decision records: `docs/decisions/`
 - Handoff notes: each stage writes `docs/handoff/NN-<stage>.md`. Attach the previous stage's handoff to the next session.
 
@@ -33,7 +33,7 @@ If a session cannot see an attachment it needs, the prompt tells the assistant t
 
 ## Fixed decisions (from the author's brief)
 
-Go modular monolith; MCP over Streamable HTTP; PostgreSQL 17+ with pgvector; pgx and sqlc; pluggable embeddings with local Ollama first; OIDC/OAuth 2.1 with individual identities; RLS plus application checks; Hierarchical scope tenancy (default organization → team → project, admin-defined extra levels, memories flow down; the only way up is an explicit human-approved promotion one level at a time; conflicts resolve to the lowest scope); Kubernetes via Helm (MicroK8s first); OpenTelemetry and Prometheus; Apache 2.0. PostgreSQL is the source of truth; a one-way git mirror (stage 06) exports each exportable event to a private scope repo for history and supplementary recovery. Git is never imported during normal operation; explicitly invoked disaster recovery is the documented exception. The mirror uses the go-git library (https://github.com/go-git/go-git), not the `git` binary. The Go MCP SDK is the suggested starting point; stage 01 confirms it against current MCP spec support.
+Go modular monolith; MCP over Streamable HTTP; PostgreSQL 17+ with pgvector; pgx and sqlc; pluggable embeddings with local Ollama first; OIDC/OAuth 2.1 with individual identities; RLS plus application checks; Hierarchical scope tenancy (default organization → team → project, admin-defined extra levels, memories flow down; the only way up is an explicit human-approved promotion one level at a time; conflicts resolve to the lowest scope); Kubernetes via Helm; OpenTelemetry and Prometheus; Apache 2.0. PostgreSQL is the source of truth; a one-way git mirror (stage 06) exports each exportable event to a private scope repo for history and supplementary recovery. Git is never imported during normal operation; explicitly invoked disaster recovery is the documented exception. The mirror uses the go-git library (https://github.com/go-git/go-git), not the `git` binary. The Go MCP SDK is the suggested starting point; stage 01 confirms it against current MCP spec support.
 
 V1 owner bootstrap is CLI-only through `team-memory init`. Later SSO linking requires explicit authentication to both identities; browser setup tokens and preconfigured SSO-owner bootstrap are deferred.
 
@@ -54,7 +54,7 @@ V1 owner bootstrap is CLI-only through `team-memory init`. Later SSO linking req
 
 ## Pilot and completion gates
 
-The first private pilot is one project used by the author across multiple machines on the existing Kubernetes setup. Use distinct test identities to verify role boundaries; do not call this evidence of multi-person adoption. Git mirrors are operator-only in v1; users browse history through the service.
+The first private pilot is one project used by the author across multiple machines on an existing Kubernetes cluster. Use distinct test identities to verify role boundaries; do not call this evidence of multi-person adoption. Git mirrors are operator-only in v1; users browse history through the service.
 
 A failed or skipped required acceptance check means the stage is incomplete, even when the findings are documented. Carry a blocker into the handoff rather than reporting success. Stage 03 needs a working selected authentication path before 04; stage 07 prepares a no-go report if required cross-client or security checks fail. Performance misses remain measured gaps, not fabricated passes. Public publishing is outside these prompts.
 

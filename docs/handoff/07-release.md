@@ -19,8 +19,10 @@
 | Client docs re-verified on Claude Code 2.1.304 | verified on 2.1.292 only; `NODE_EXTRA_CA_CERTS` tip is general advice, not tested |
 
 ## Manual steps for the user
-1. Set the security/conduct contact in `SECURITY.md`; confirm the author email in git history is acceptable.
-2. Pick the real GitHub path and change the Go module path.
-3. Decide whether `prompts/`, `proposal.md`, `review*.md` ship.
-4. Choose the pilot project; run the cross-client scenario (`make k3d-up`, see stage 06 handoff).
-5. Recommended: external security review. Then create the repo, tag, announce (all excluded here).
+Resolved by the author on 2026-10-22: security contact, module path (matches the repo URL), planning docs ship publicly (private paths and cluster references scrubbed), git author email is public.
+
+Remaining:
+1. Run the cross-client scenario, with Codex tested by the author (`make k3d-up`, see the stage 06 handoff).
+2. Pilot: the author is open-sourcing this as a personal project; a real-project pilot is optional and can be recorded in `docs/verification/private-pilot.md` after launch if it is to be claimed at all.
+3. Refresh `docs/landscape.md` with cited research.
+4. Recommended: external security review. Then create the repo, push, enable GitHub private vulnerability reporting, tag `v0.x.y` (the release workflow publishes image and chart), announce. No deploy has been done.

@@ -43,7 +43,7 @@ Codex 0.163.0 speaks protocol 2025-06-18, which already required PRM, RFC 8707 a
 
 ## Client behavior: verified vs read
 
-Installed versions: **Claude Code 2.1.292**, **Codex CLI 0.163.0** (`claude --version`, `codex --version` on the author's macOS workstation, 2026-10-21). Full log: `docs/verification/stage-03-oauth.md`.
+Installed versions: **Claude Code 2.1.292**, **Codex CLI 0.163.0** (`claude --version`, `codex --version` on a macOS workstation, 2026-10-21). Full log: `docs/verification/stage-03-oauth.md`.
 
 | Behavior | Claude Code 2.1.292 | Codex 0.163.0 | Source |
 | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # Handoff: stage 01 (foundation)
 
-Date: 2026-10-20. Repository: `/Users/tyler/Documents/projects/memory/team-memory/` (service code and planning files share one repository, at the author's request; the prompts were updated to match).
+Date: 2026-10-20. Repository: this repository (service code and planning files share one repository, at the author's request; the prompts were updated to match).
 
 ## Summary
 

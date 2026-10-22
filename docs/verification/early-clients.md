@@ -1,6 +1,6 @@
 # Early cross-client smoke test (stage 01)
 
-Date: 2026-10-20. Machine: the author's macOS workstation (darwin/arm64). Server: `team-memory serve` from this repository at the stage 01 commit, against the local compose PostgreSQL 17 + pgvector 0.8.1, listening on `127.0.0.1:18080/mcp`. Authentication: a personal access token issued by `team-memory init`.
+Date: 2026-10-20. Machine: a macOS workstation (darwin/arm64). Server: `team-memory serve` from this repository at the stage 01 commit, against the local compose PostgreSQL 17 + pgvector 0.8.1, listening on `127.0.0.1:18080/mcp`. Authentication: a personal access token issued by `team-memory init`.
 
 This is a basic PAT smoke test with synthetic data in one scope (`acme/smoke`). It is not the stage 07 release verification, does not exercise OAuth, and is not pilot evidence.
 
@@ -81,6 +81,6 @@ The code is in `cmd/team-memory/main.go`, tested in `main_test.go`. Confirmed ag
 
 ## Observations and gaps
 
-- Codex logged unrelated errors refreshing its model list from the author's configured model proxy. They did not affect MCP calls.
+- Codex logged unrelated errors refreshing its model list from a configured model proxy. They did not affect MCP calls.
 - Real clients have now exercised `memory_create`, `memory_search`, `memory_get`, `memory_update` (including the stale-revision conflict), `memory_history`, `memory_recent` and one resource. `memory_supersede` and `memory_approve` are covered only by the SDK-client protocol test (`integration/mcp_test.go`).
 - Not tested: OAuth (stage 03), Windows/Linux clients, and other machines.

@@ -4,10 +4,20 @@ Deploys Team Memory: the API (`serve`: MCP endpoint, OAuth facade, web portal), 
 
 Start with `docs/operations/authentication.md`: it lists the Secrets to create **before** installing and the exact order of operations, for solo (personal access tokens) and team (upstream OIDC) mode.
 
+From a checkout:
+
 ```sh
 helm upgrade --install team-memory deploy/helm/team-memory -n team-memory -f values.yaml
 helm test team-memory -n team-memory
 ```
+
+From the OCI registry, once a release has been tagged and published (the release workflow pushes the chart to `ghcr.io/team-memory/charts`):
+
+```sh
+helm upgrade --install team-memory oci://ghcr.io/team-memory/charts/team-memory --version <chart-version> -n team-memory -f values.yaml
+```
+
+`values.yaml` here is your own file. Start from `ci/solo-values.yaml` (personal access tokens, no IdP) or `ci/full-values.yaml` (every feature enabled) and replace the placeholder hostnames and Secret names. `values.schema.json` rejects values of the wrong type at install time.
 
 ## Required values
 

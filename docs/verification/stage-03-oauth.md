@@ -1,6 +1,6 @@
 # Stage 03 OAuth verification with real clients
 
-Date: 2026-10-21. Machine: the author's macOS workstation (darwin/arm64).
+Date: 2026-10-21. Machine: a macOS workstation (darwin/arm64).
 
 Setup:
 - **Server:** `team-memory serve` from this branch, with `TEAM_MEMORY_SSO_CONFIG` pointing at the `deploy/dev-idp` configuration.
@@ -86,7 +86,7 @@ Neither client can use B without per-client pre-registration at each IdP. This w
 - **Claude Code** refreshed four times in about 12 s within one `-p` run, sequentially. With strict rotation and reuse detection, a *concurrent* duplicate would revoke the family. See the stage 04 note in the decision record.
 - **Claude Code** printed an SDK notice that the stored credential has no RFC 9207 issuer stamp. Team Memory does not emit `iss` in authorization responses yet.
 - Both clients requested `offline_access` because the AS metadata lists it, and neither sent `openid`.
-- Codex logged unrelated errors while refreshing its model list from the author's model proxy. They did not affect MCP.
+- Codex logged unrelated errors while refreshing its model list from a model proxy. They did not affect MCP.
 
 ## Cleanup
 

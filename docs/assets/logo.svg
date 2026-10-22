@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Team Memory">
+  <rect width="64" height="64" rx="14" fill="#1f4e79"/>
+  <circle cx="32" cy="20" r="7" fill="#fff"/>
+  <circle cx="18" cy="44" r="7" fill="#fff" opacity=".85"/>
+  <circle cx="46" cy="44" r="7" fill="#fff" opacity=".85"/>
+  <path d="M32 27 18 37M32 27l14 10" stroke="#fff" stroke-width="3" fill="none"/>
+</svg>

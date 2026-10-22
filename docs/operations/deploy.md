@@ -73,7 +73,7 @@ Whichever you choose, the database needs: PostgreSQL 17, pgvector 0.8, an owner 
 - Enable `dns`, `ingress` (or the `traefik` addon), `hostpath-storage` or another storage class if PostgreSQL runs in-cluster, and `metrics-server`.
 - MicroK8s' NGINX ingress runs in namespace `ingress`; Traefik installed by Helm usually in `traefik`. Set `networkPolicy.ingressFrom` to that namespace, and `ingress.className` accordingly.
 - MicroK8s uses Calico, which enforces NetworkPolicy. Its default pod CIDR is `10.1.0.0/16` (`trustedProxies`).
-- For a Tailscale-only hostname, terminate TLS at the ingress with a certificate for that name (for example Tailscale's `tailscale cert`) and keep `publicURL` equal to it.
+- For a hostname reachable only on a private network, terminate TLS at the ingress with a certificate valid for that name (a private CA or DNS-01 ACME) and keep `publicURL` equal to it.
 
 ## NetworkPolicy behaviour to know
 
@@ -83,4 +83,4 @@ Whichever you choose, the database needs: PostgreSQL 17, pgvector 0.8, an owner 
 
 ## Verified on
 
-A disposable k3d cluster (k3s v1.36, Traefik, kube-router NetworkPolicy, PostgreSQL 17 + pgvector in-cluster, Keycloak 26, Ollama 0.13 CPU, Gitea 1.25 for the mirror, Jaeger and Prometheus): `deploy/dev-k3d/`. The author's MicroK8s cluster was **not** used; deploying there requires explicit confirmation and the values in the MicroK8s notes above.
+A disposable k3d cluster (k3s v1.36, Traefik, kube-router NetworkPolicy, PostgreSQL 17 + pgvector in-cluster, Keycloak 26, Ollama 0.13 CPU, Gitea 1.25 for the mirror, Jaeger and Prometheus): `deploy/dev-k3d/`. No production cluster was used for these measurements; see the MicroK8s notes above for single-node values.

@@ -9,7 +9,7 @@ Date: 2026-10-21. Raw results: `results-nomic-embed-text.json` and `results-qwen
 - **Metrics:** recall@5 = |relevant ∩ top 5| / |relevant|, averaged over queries. MRR = 1 / rank of the first relevant result in the top 10 (0 if none), averaged. Searches run from the query's scope, so only that scope and its ancestors are candidates, as in production.
 - **Thresholds were tuned on the same queries they are reported on.** There is no held-out split, so the "with floor" numbers are optimistic.
 - **Run-to-run variation:** the tables are from the final run (after the review fixes). An earlier run, before those fixes (none of which touched ranking), gave identical recall figures, but hybrid MRR was 0.02–0.06 lower (nomic raw 0.749, with floor 0.784). Equal-rank ties are broken by `updated_at` and random memory IDs, which differ on every load. Treat MRR differences below about 0.05 as noise.
-- **Environment:** Ollama 0.18.0 on the author's machine over a Tailscale HTTPS link, and PostgreSQL 17 / pgvector 0.8.1 in Docker on an Apple Silicon Mac. The latencies include query embedding over that network. They are informational, not a performance target.
+- **Environment:** Ollama 0.18.0 on a separate machine over an HTTPS link, and PostgreSQL 17 / pgvector 0.8.1 in Docker on an Apple Silicon Mac. The latencies include query embedding over that network. They are informational, not a performance target.
 
 ## Results by mode
 

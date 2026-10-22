@@ -13,7 +13,7 @@
 | Stage | Where | Gate to move on |
 | --- | --- | --- |
 | 1. Dev | `make test` (unit, integration, security suite), the browser test, `helm lint`/`helm template`, and the disposable k3d cluster (`deploy/dev-k3d/setup.sh`) | Everything green; `rollback-drill.sh` passes for releases with migrations |
-| 2. Private cluster (pilot) | The author's MicroK8s cluster, one project, several machines | 1 week without unexplained alerts; `mirror verify` clean; a restore drill done on the real database in the last 90 days |
+| 2. Private cluster (pilot) | A private cluster, one project, several machines | 1 week without unexplained alerts; `mirror verify` clean; a restore drill done on the real database in the last 90 days |
 | 3. Wider use | More projects, then more people | Pilot report reviewed; stage 07 cross-client checks pass |
 
 For each upgrade:

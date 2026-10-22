@@ -6,7 +6,7 @@ Reviewed 2026-10-20 against the idea-to-build workflow. This is a planning revie
 
 The idea, intended audience, and core use case are clear enough to start foundation work. The agreed scope remains a substantial seven-stage v1, with authentication architecture requiring an evidence-backed decision in stage 03. The four-week estimate is unvalidated; stage labels no longer imply a committed schedule. The author wants GitHub launch as soon as stability is demonstrated by the required checks.
 
-No pilot project is selected yet. The first pilot will be the author using one project across multiple machines on the existing Kubernetes setup. That can demonstrate continuity across clients and machines. It cannot establish multi-person usability or adoption; later team testing remains necessary before making those claims.
+No pilot project is selected yet. The first pilot will be the author using one project across multiple machines on an existing Kubernetes cluster. That can demonstrate continuity across clients and machines. It cannot establish multi-person usability or adoption; later team testing remains necessary before making those claims.
 
 ## Changes made
 

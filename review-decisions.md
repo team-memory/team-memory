@@ -31,7 +31,7 @@ The git mirror exports one commit per exportable event (including creation and r
 
 ## Pilot and mirror audience
 
-The first private pilot is the author working on one project across multiple machines using the existing Kubernetes setup. It validates cross-machine continuity and client interoperability. Use separate test identities for authorization tests; reserve claims about team usability for a later multi-person pilot. No pilot project has been selected yet; choose it before the real pilot, without blocking foundation work. Team Memory itself is a possible dogfooding project, not a settled choice. Synthetic fixtures may be used for engineering tests but must not be presented as real pilot evidence.
+The first private pilot is the author working on one project across multiple machines using an existing Kubernetes cluster. It validates cross-machine continuity and client interoperability. Use separate test identities for authorization tests; reserve claims about team usability for a later multi-person pilot. No pilot project has been selected yet; choose it before the real pilot, without blocking foundation work. Team Memory itself is a possible dogfooding project, not a settled choice. Synthetic fixtures may be used for engineering tests but must not be presented as real pilot evidence.
 
 The author has no self-hosted SSO yet. Use disposable local Keycloak for development/testing as already planned; production SSO remains optional for solo use.
 
