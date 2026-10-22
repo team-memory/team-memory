@@ -264,13 +264,6 @@ func (p *Portal) Register(mux *http.ServeMux) {
 
 // --- request plumbing ----------------------------------------------------
 
-type ctxKey int
-
-const (
-	keySession ctxKey = iota
-	keyPrincipal
-)
-
 // wrap applies headers, panic recovery and the global per-client limit.
 func (p *Portal) wrap(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -442,8 +435,6 @@ type req struct {
 	sess Session
 	p    memory.Principal
 }
-
-func (q *req) ctx() context.Context { return q.r.Context() }
 
 func (q *req) uuidParam(name string) (uuid.UUID, error) {
 	id, err := uuid.Parse(q.r.PathValue(name))

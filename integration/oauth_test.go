@@ -247,7 +247,7 @@ func (b *browser) run(ctx context.Context, authURL string) (*url.URL, *http.Resp
 		return nil, nil, "", err
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if loc, err := resp.Location(); err == nil && strings.HasPrefix(loc.String(), b.redirect) {
 		return loc, resp, "", nil
 	}
@@ -268,7 +268,7 @@ func (b *browser) run(ctx context.Context, authURL string) (*url.URL, *http.Resp
 		return nil, nil, "", err
 	}
 	body, _ = io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	loc, err := resp.Location()
 	if err != nil || !strings.HasPrefix(loc.String(), b.redirect) {
 		return nil, resp, string(body), fmt.Errorf("login did not return to the client: %d %s", resp.StatusCode, body)
@@ -332,7 +332,7 @@ func TestOAuthLoginEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if ch := resp.Header.Get("WWW-Authenticate"); resp.StatusCode != 401 ||
 		!strings.Contains(ch, `resource_metadata="`+env.url+oauth.ProtectedResourcePath+`"`) || !strings.Contains(ch, `scope="memory"`) {
 		t.Fatalf("challenge: %d %q", resp.StatusCode, ch)
@@ -458,7 +458,7 @@ func TestOAuthPolicyRejections(t *testing.T) {
 		ClientID string `json:"client_id"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&client)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 201 || client.ClientID == "" {
 		t.Fatalf("register: %d", resp.StatusCode)
 	}
@@ -473,7 +473,7 @@ func TestOAuthPolicyRejections(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return resp
 	}
 	if r := authorize(nil); r.StatusCode != 302 || !strings.HasPrefix(r.Header.Get("Location"), "/oauth/login") && !strings.Contains(r.Header.Get("Location"), "/oauth/login") {
@@ -504,7 +504,7 @@ func TestOAuthPolicyRejections(t *testing.T) {
 	for _, uri := range []string{"http://attacker.example.com/cb", "https://attacker.example.com/cb", "custom-scheme://cb"} {
 		bad, _ := json.Marshal(map[string]any{"redirect_uris": []string{uri}})
 		resp, _ = http.Post(env.url+"/oauth/register", "application/json", strings.NewReader(string(bad)))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 400 {
 			t.Fatalf("redirect %s registered: %d", uri, resp.StatusCode)
 		}
@@ -534,7 +534,7 @@ func TestOAuthRejectsUpstreamAndForeignTokens(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 401 || !strings.Contains(resp.Header.Get("WWW-Authenticate"), "resource_metadata") {
 			t.Errorf("%s: %d %q", name, resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
 		}

@@ -61,7 +61,7 @@ func (b *pbrowser) do(req *http.Request) resp {
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, _ := io.ReadAll(r.Body)
 	if m := csrfField.FindSubmatch(body); m != nil {
 		b.csrf = string(m[1])

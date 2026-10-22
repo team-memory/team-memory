@@ -495,7 +495,7 @@ func TestMetadataClientRefusesLoopback(t *testing.T) {
 	t.Cleanup(srv.Close)
 	resp, err := publicOnlyHTTPClient().Get(srv.URL + "/client.json")
 	if err == nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatal("metadata client connected to a loopback address")
 	}
 	if !strings.Contains(err.Error(), "non-public address") {

@@ -56,7 +56,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), c.want) {
 				t.Fatalf("readyz: %d %q, want 503 mentioning %q", resp.StatusCode, body, c.want)
 			}
@@ -73,7 +73,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode != http.StatusServiceUnavailable {
 					t.Fatalf("/mcp served while SSO is broken (bearer=%t): %d", bearer != "", resp.StatusCode)
 				}
@@ -82,7 +82,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("/oauth served while SSO is broken: %d", resp.StatusCode)
 			}
@@ -91,7 +91,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode != http.StatusServiceUnavailable {
 					t.Fatalf("%s served while SSO is broken: %d", path, resp.StatusCode)
 				}
@@ -100,7 +100,7 @@ func TestSSOMisconfigurationFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusServiceUnavailable {
 				t.Fatalf("metadata served while SSO is broken: %d", resp.StatusCode)
 			}
@@ -143,10 +143,10 @@ func TestSoloBootstrapNoIdP(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("readyz without SSO: %v %d", err, resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	for _, p := range []string{"/.well-known/oauth-protected-resource", "/oauth/authorize"} {
 		resp, _ := http.Get(srv.URL + p)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("%s exists in solo mode: %d", p, resp.StatusCode)
 		}

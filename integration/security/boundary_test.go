@@ -31,7 +31,7 @@ func post(t *testing.T, url, authz, body string) (int, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
 }
@@ -66,7 +66,7 @@ func TestNoUnauthenticatedMode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					t.Errorf("GET %s answered 200 without credentials", path)
 				}

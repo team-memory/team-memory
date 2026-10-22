@@ -77,18 +77,6 @@ type filterForm struct {
 	Kind, Trust, Status, Since, Until string
 }
 
-func (f filterForm) values() url2 {
-	v := url2{}
-	for k, x := range map[string]string{"kind": f.Kind, "trust": f.Trust, "status": f.Status, "since": f.Since, "until": f.Until} {
-		if x != "" {
-			v[k] = x
-		}
-	}
-	return v
-}
-
-type url2 map[string]string
-
 func parseDate(s string, endOfDay bool) time.Time {
 	t, err := time.Parse("2006-01-02", s)
 	if err != nil {

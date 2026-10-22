@@ -265,16 +265,6 @@ func sep(u string) string {
 	return "?"
 }
 
-// afterPromoteError keeps the approval (it was applied) and reports the
-// promotion problem on the memory page.
-func (p *Portal) afterPromoteError(q *req, r *http.Request, id uuid.UUID, err error) error {
-	if errors.Is(err, memory.ErrPromotionStale) || errors.Is(err, memory.ErrForbidden) || errors.Is(err, memory.ErrNotFound) {
-		u := p.memURL(id, r)
-		return p.redirect(q, u+sep(u)+"err=promote_failed", "approved")
-	}
-	return err
-}
-
 func (p *Portal) reject(w http.ResponseWriter, r *http.Request, q *req) error {
 	id, err := q.uuidParam("id")
 	if err != nil {

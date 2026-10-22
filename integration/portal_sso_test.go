@@ -44,7 +44,7 @@ func (u *portalUser) do(req *http.Request) (int, string, *url.URL) {
 			u.t.Fatal(err)
 		}
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if m := csrfRe.FindSubmatch(body); m != nil {
 			u.csrf = string(m[1])
 		}

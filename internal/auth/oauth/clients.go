@@ -269,7 +269,7 @@ func (r *clientRegistry) metadataDocument(ctx context.Context, id string) (*clie
 	if err != nil {
 		return nil, fmt.Errorf("fetch client metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch client metadata: HTTP %d", resp.StatusCode)
 	}

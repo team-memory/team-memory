@@ -185,7 +185,7 @@ func (c *Config) Validate() error {
 		}
 		seen[p.ID] = true
 		iu, err := url.Parse(p.Issuer)
-		if err != nil || iu.Host == "" || (iu.Scheme != "https" && !(iu.Scheme == "http" && c.AllowInsecureHTTP && isLoopbackHost(iu.Hostname()))) {
+		if err != nil || iu.Host == "" || (iu.Scheme != "https" && (iu.Scheme != "http" || !c.AllowInsecureHTTP || !isLoopbackHost(iu.Hostname()))) {
 			return fmt.Errorf("provider %q: issuer must be an https URL", p.ID)
 		}
 		if p.ClientID == "" || p.ClientSecretFile == "" {
