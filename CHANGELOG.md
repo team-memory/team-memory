@@ -4,7 +4,11 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
-Pre-release. Built in stages; see `docs/handoff/` for what each stage delivered.
+Pre-release personal proof of concept. Built in stages; see `docs/handoff/` for what each stage delivered.
+
+### Changed
+- Positioned as a personal proof of concept: no external security review or real-project pilot is planned (README, SECURITY.md, release checklist).
+- README reorganized; setup docs corrected against the code.
 
 ### Added
 - Isolated local Docker app/database stack and reproducible setup, Codex connection, testing and shutdown instructions.

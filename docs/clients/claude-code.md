@@ -1,6 +1,8 @@
 # Connecting Claude Code
 
-Verified against Claude Code 2.1.292 (stage 01 PAT smoke test, stage 03 OAuth). Claude Code 2.1.304 is installed now and has not been re-run; see `docs/verification/cross-client.md` for what is still unverified.
+Verified against Claude Code 2.1.292 (stage 01 PAT smoke test, stage 03 OAuth). Later versions have not been re-verified; see [cross-client verification](../verification/cross-client.md) for what is still outstanding.
+
+For a local server started from the README quickstart, replace `https://memory.example.com/mcp` below with `http://127.0.0.1:8080/mcp`.
 
 ## With a personal access token (solo)
 
