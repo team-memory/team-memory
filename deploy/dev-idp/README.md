@@ -19,11 +19,13 @@ Nothing in this directory is a secret. `setup.sh` generates random client secret
 docker compose -f deploy/dev-idp/compose.yaml up -d --wait
 ```
 
-Team Memory must run at `http://localhost:8080`. The IdP clients are registered with `http://localhost:8080/oauth/callback/{keycloak,dex}`. Use a database of its own, because `init` refuses to run twice:
+Team Memory must run at `http://localhost:8080`. The IdP clients are registered with `http://localhost:8080/oauth/callback/{keycloak,dex}`. Prepare the database as in the README quickstart (`init` and the `tm_app` login role). `init` runs only once per database, so you can reuse an already initialized one; its owner can later link an SSO identity in the portal. Then start the server with the generated SSO configuration:
 
 ```bash
-TEAM_MEMORY_SSO_CONFIG=$PWD/deploy/dev-idp/.local/sso.json TEAM_MEMORY_PUBLIC_URL=http://localhost:8080 ./bin/team-memory serve
+TEAM_MEMORY_APP_DATABASE_URL='postgres://tm_app:tm-app-dev@127.0.0.1:55432/teammemory?sslmode=disable' TEAM_MEMORY_SSO_CONFIG=$PWD/deploy/dev-idp/.local/sso.json TEAM_MEMORY_PUBLIC_URL=http://localhost:8080 ./bin/team-memory serve
 ```
+
+(`make dev-idp-up` and `make dev-idp-down` wrap the `setup.sh`, `up` and `down` commands on this page.)
 
 Then add `http://localhost:8080/mcp` to a client and sign in. With Claude Code, run `claude mcp add --transport http tm-dev http://localhost:8080/mcp`, then `claude mcp login tm-dev`. With Codex, run `codex mcp add tm_dev --url http://localhost:8080/mcp`, then `codex mcp login tm_dev`.
 
