@@ -28,7 +28,16 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          {{- $paths := list "/mcp" "/oauth" "/.well-known" }}
+          {{- /* Exact root exposes onboarding without exposing operational endpoints. */}}
+          {{- if not (and .Values.portal.enabled (eq .Values.portal.basePath "/")) }}
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $svc }}
+                port: {number: {{ $port }}}
+          {{- end }}
+          {{- $paths := list "/welcome" "/mcp" "/oauth" "/.well-known" }}
           {{- if .Values.portal.enabled }}
           {{- $paths = append $paths .Values.portal.basePath }}
           {{- end }}

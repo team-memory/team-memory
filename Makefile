@@ -77,6 +77,7 @@ helm-lint: ## Lint and render the chart (solo and all-features values)
 	helm lint deploy/helm/team-memory --strict -f deploy/helm/team-memory/ci/solo-values.yaml
 	helm lint deploy/helm/team-memory --strict -f deploy/helm/team-memory/ci/full-values.yaml
 	helm template t deploy/helm/team-memory -f deploy/helm/team-memory/ci/full-values.yaml >/dev/null
+	python3 deploy/helm/team-memory/ci/test_ingress.py
 
 check-alerts: ## Validate and unit-test the example alert rules with promtool (Docker)
 	docker run --rm -v $(CURDIR)/deploy:/deploy -w /deploy/observability --entrypoint promtool $(PROMETHEUS_IMAGE) \

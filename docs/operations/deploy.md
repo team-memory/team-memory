@@ -4,6 +4,8 @@ Team Memory ships as one container image and one Helm chart (`deploy/helm/team-m
 
 ## Topology
 
+The public welcome page is served at `/` and `/welcome`, with assets under `/welcome/`. The ingress uses an `Exact` match for `/` and a `Prefix` match for `/welcome`; a root-mounted portal retains its existing prefix route. If the page works directly on the service but returns 404 through ingress, check that these routes are present. Upgrading only the container image does not update ingress routes; deploy the updated Helm chart too.
+
 ```
             ingress (Traefik or any class), one hostname, TLS
                  │  /mcp  /oauth/*  /.well-known/*  /portal
