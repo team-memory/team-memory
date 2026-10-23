@@ -187,21 +187,22 @@ func itoa(n int) string {
 // --- search -----------------------------------------------------------------
 
 type searchView struct {
-	Scope   string
-	Query   string
-	Mode    string
-	Kind    string
-	Resp    *search.Response
-	Names   map[uuid.UUID]string
-	Kinds   []memory.Kind
-	Ran     bool
-	Similar map[uuid.UUID][]memory.ConflictCandidate
-	Role    memory.Role
-	Overlap bool
+	ShowOver bool
+	Scope    string
+	Query    string
+	Mode     string
+	Kind     string
+	Resp     *search.Response
+	Names    map[uuid.UUID]string
+	Kinds    []memory.Kind
+	Ran      bool
+	Similar  map[uuid.UUID][]memory.ConflictCandidate
+	Role     memory.Role
+	Overlap  bool
 }
 
 func (p *Portal) searchPage(w http.ResponseWriter, r *http.Request, q *req) error {
-	v := searchView{Scope: r.URL.Query().Get("scope"), Query: strings.TrimSpace(r.URL.Query().Get("q")),
+	v := searchView{ShowOver: r.URL.Query().Get("overridden") == "1", Scope: r.URL.Query().Get("scope"), Query: strings.TrimSpace(r.URL.Query().Get("q")),
 		Mode: r.URL.Query().Get("mode"), Kind: r.URL.Query().Get("kind"), Kinds: memory.Kinds}
 	if v.Scope == "" {
 		scopes, err := p.o.Memory.BrowsableScopes(r.Context(), q.p)

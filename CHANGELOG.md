@@ -4,7 +4,14 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added
+- Branded public homepage with agent setup instructions for Codex and Claude Code, deployment-aware authentication guidance, and portal links.
+
+### Changed
+- Refreshed portal and OAuth consent styling with responsive layouts and shared branding.
+
 ### Fixed
+- Search now preserves the Include overridden checkbox after submitting filters.
 - Release workflow: the image is now also tagged with the version without the `v` (for example `0.1.1`), which is the tag the Helm chart deploys by default.
 - Release workflow: the image is built with `VERSION`, so `team-memory version` reports the release instead of `0.0.0-dev`.
 - Release workflow: the image is built for `linux/amd64` and `linux/arm64` (0.1.0 was amd64 only).

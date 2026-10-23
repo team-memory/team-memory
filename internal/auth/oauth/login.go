@@ -38,12 +38,13 @@ var consentPage = template.Must(template.New("consent").Parse(`<!doctype html>
 <title>Authorize {{.ClientName}} · Team Memory</title>
 <style>
 body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;color:#1d1d1f;background:#fff}
-h1{font-size:1.3rem} dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}
+body{box-sizing:border-box;max-width:40rem;margin:5rem auto;padding:2.5rem;border:1px solid #d4dfe4;border-radius:18px;box-shadow:0 12px 48px #172b3510;color:#172b35;background:#f5f7fa} h1{font-size:1.8rem;line-height:1.2;letter-spacing:-.04em} dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}
 dt{color:#555} dd{margin:0;word-break:break-all} .warn{background:#fff4e5;border:1px solid #f0c36d;padding:.75rem;border-radius:6px}
 button{font:inherit;padding:.5rem 1rem;margin:.5rem .5rem 0 0;border-radius:6px;border:1px solid #888;background:#f5f5f7;cursor:pointer}
-button.primary{background:#0b57d0;color:#fff;border-color:#0b57d0}
-@media (prefers-color-scheme: dark){body{background:#111;color:#eee}dt{color:#aaa}button{background:#222;color:#eee}.warn{background:#3a2a10;border-color:#8a6d2b}}
+button.primary{background:#086b5b;color:#fff;border-color:#086b5b} button{min-height:44px;border-radius:9px} button:focus-visible{outline:3px solid #086b5b;outline-offset:3px} .brand{font-weight:750;color:#086b5b;letter-spacing:-.03em} @media(max-width:600px){body{margin:1rem;padding:1.5rem}dl{grid-template-columns:1fr}dd{margin-bottom:.5rem}}
+@media (prefers-color-scheme: dark){body{background:#111;color:#eee}dt{color:#aaa}.brand{color:#76dcc5}button{background:#222;color:#eee}.warn{background:#3a2a10;border-color:#8a6d2b}}
 </style></head><body>
+<p class="brand">Team Memory / Connect an agent</p>
 <h1>{{.ClientName}} wants to use Team Memory as you</h1>
 <p>If you continue, you will sign in with your organization's identity provider, and this application will be able to read and write memories with your permissions.</p>
 <dl>

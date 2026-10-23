@@ -30,7 +30,7 @@ import (
 	"github.com/team-memory/team-memory/internal/search"
 )
 
-//go:embed templates/*.html static/*
+//go:embed templates/*.html static/* public/*.html
 var assets embed.FS
 
 // SSO is the part of the OAuth facade the portal uses to sign people in and

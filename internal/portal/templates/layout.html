@@ -10,7 +10,8 @@
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
-<a class="brand" href="{{u "/"}}">Team Memory</a>
+<a class="brand" href="{{u "/"}}"><span class="brand-mark" aria-hidden="true">tm</span> Team Memory</a>
+<a class="setup-link" href="/welcome#setup">Agent setup</a>
 {{if .User}}
 <nav aria-label="Main">
 <a href="{{u "/"}}">Scopes</a>
@@ -29,7 +30,7 @@
 <h1>{{.Title}}</h1>
 {{template "content" .}}
 </main>
-<footer>{{if .RequestID}}<small>Request ID: <code>{{.RequestID}}</code></small>{{end}}</footer>
+<footer><span class="brand">Team Memory</span> {{if .RequestID}}<small>Request ID: <code>{{.RequestID}}</code></small>{{end}}</footer>
 </body>
 </html>{{end}}
 

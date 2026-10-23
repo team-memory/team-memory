@@ -72,6 +72,8 @@ You now have:
 | Portal | `http://127.0.0.1:8080/portal/` (sign in with the token from step 3) |
 | Health and readiness | `http://127.0.0.1:9090/healthz`, `http://127.0.0.1:9090/readyz` |
 
+The service root (`/`) provides a public homepage with agent setup instructions and a portal link. Setup is also always available at `/welcome`, including when the portal is mounted at `/`. Set `TEAM_MEMORY_PUBLIC_URL` so the examples show your deployment’s MCP endpoint.
+
 In a deployment, put the service behind TLS at a hostname such as `https://memory.example.com`.
 
 ## Connect a client
