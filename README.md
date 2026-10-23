@@ -21,7 +21,9 @@ This repository holds both the service code and the planning material (`proposal
 
 ## Quickstart (local)
 
-Requires Go 1.27+ and Docker.
+For a fully containerized service and database, follow [Local Docker testing](docs/operations/local-docker.md), including Codex connection steps. This uses an isolated database and requires no host Go installation.
+
+The host-development workflow below requires Go 1.27+ and Docker.
 
 ```bash
 make db-up

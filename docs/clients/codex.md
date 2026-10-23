@@ -1,6 +1,8 @@
 # Connecting Codex
 
-Verified against Codex CLI 0.163.0 (stage 01 PAT smoke test, stage 03 OAuth). That is also the version installed now.
+Verified against Codex CLI 0.163.0 (stage 01 PAT smoke test, stage 03 OAuth). The local Docker setup was also configured with CLI 0.163.0 on 2026-10-23.
+
+For a local containerized instance, follow [Local Docker testing](../operations/local-docker.md). It uses the separate `team_memory_local` registration and `TEAM_MEMORY_LOCAL_TOKEN` variable.
 
 ## With a personal access token (solo)
 

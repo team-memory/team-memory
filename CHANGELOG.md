@@ -7,6 +7,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 Pre-release. Built in stages; see `docs/handoff/` for what each stage delivered.
 
 ### Added
+- Isolated local Docker app/database stack and reproducible setup, Codex connection, testing and shutdown instructions.
 - Helm chart schema, icon and metadata; tag-triggered release workflow for the image and chart.
 - CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, NOTICE, issue and PR templates, client setup docs, release checklist (stage 07).
 - Memory engine with immutable revisions, hierarchical scopes and downward-only inheritance (stage 01).

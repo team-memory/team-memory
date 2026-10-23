@@ -1,0 +1,43 @@
+# Isolated, full-stack local testing; no host Go installation required.
+# Throwaway credentials only. Host ports bind to loopback.
+name: team-memory-local
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: teammemory
+      POSTGRES_PASSWORD: teammemory-dev
+      POSTGRES_DB: teammemory
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teammemory -d teammemory"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  operator:
+    profiles: [tools]
+    image: team-memory:local
+    build: .
+    environment:
+      DATABASE_URL: postgres://teammemory:teammemory-dev@postgres:5432/teammemory?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+  app:
+    image: team-memory:local
+    build: .
+    environment:
+      TEAM_MEMORY_APP_DATABASE_URL: postgres://tm_app:tm-app-dev@postgres:5432/teammemory?sslmode=disable
+      TEAM_MEMORY_DEFAULT_SCOPE: local/default
+      TEAM_MEMORY_PUBLIC_URL: http://localhost:8080
+      TEAM_MEMORY_LISTEN: :8080
+      TEAM_MEMORY_METRICS_LISTEN: :9090
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  pgdata:
