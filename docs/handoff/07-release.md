@@ -1,5 +1,7 @@
 # Handoff: stage 07 (partial)
 
+> **Superseded on 2026-10-23:** the author reports the cross-client scenario passed, and the project is now a personal proof of concept (no external review or pilot planned). Current status: [release checklist](../release-checklist.md). The rest of this page is the original stage 07 record.
+
 ## Go / no-go
 **No-go for publishing.** The cross-client scenario (`docs/verification/cross-client.md`) and private pilot (`docs/verification/private-pilot.md`) were not run; per the stage rules that is an incomplete gate, not a pass.
 

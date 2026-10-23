@@ -2,7 +2,7 @@
 
 A self-hosted, permission-aware shared memory for developers and their AI coding agents, served over MCP (Model Context Protocol).
 
-> **Status: pre-release, not yet verified for production use.** Stages 01–06 are built and tested; stage 07 (release) is in progress. The two-client end-to-end run and a real-project pilot are still outstanding, so the current assessment is **no-go for publishing**. Details: [release checklist](docs/release-checklist.md) and [stage 07 handoff](docs/handoff/07-release.md).
+> **Status: personal proof of concept.** It is built and tested, and Claude Code and Codex have been verified against it, but it is not supported and has had no external security review. Do not rely on it for production or sensitive data. Details: [release checklist](docs/release-checklist.md).
 
 This repository holds both the service code and its planning material ([`proposal.md`](proposal.md), [`review-decisions.md`](review-decisions.md), [`prompts/`](prompts/)).
 
@@ -282,12 +282,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules CI and reviewers enforce.
 
 ## Status and limitations
 
-- Pre-release; no tagged version. Versioning policy: [CONTRIBUTING.md](CONTRIBUTING.md#versioning-policy).
+- Personal proof of concept, maintained by one person, with no support commitment. No tagged version yet. Versioning policy: [CONTRIBUTING.md](CONTRIBUTING.md#versioning-policy).
 - Not yet used by more than one real person. The only multi-identity evidence uses synthetic test identities.
 - Embeddings need a reachable Ollama; without one, search is full-text only.
 - Git mirrors are operator-only. Users browse history through the service.
 - Measured gaps against the performance targets are listed in the [load-test report](docs/operations/load-test-report.md).
-- No external security review has been done. See [SECURITY.md](SECURITY.md) and the [threat model](docs/security/threat-model.md) for residual risks.
+- No external security review has been done, and none is planned. See [SECURITY.md](SECURITY.md) and the [threat model](docs/security/threat-model.md) for residual risks.
 
 ## Contributing and security
 

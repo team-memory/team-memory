@@ -1,10 +1,10 @@
 # Cross-client verification (stage 07)
 
-**Status: NOT RUN. This gate is incomplete, so the release assessment is no-go.**
+**Status: passed, as reported by the author on 2026-10-23.** The author ran the cross-client scenario by hand, including Codex. Client versions, commands and outputs from that run are not recorded here; add them below if a reproducible record is wanted.
 
-The required scenario (Claude Code writes, Codex retrieves, and the reverse; approval in the portal; update; supersede; unauthorized user; hierarchy, promotion and override; mirror commits for each mutation) needs a running deployment with distinct authorized identities (writer, reader, maintainer, unauthorized) and an interactive browser for portal approval. That run did not happen in this session, and nothing here is claimed as observed.
+The scenario: Claude Code writes, Codex retrieves, and the reverse; approval in the portal; update; supersede; unauthorized user; hierarchy, promotion and override; mirror commits for each mutation. It needs a running deployment with distinct authorized identities (writer, reader, maintainer, unauthorized) and an interactive browser for portal approval.
 
-## What exists as evidence (earlier, narrower)
+## Earlier, narrower evidence
 
 | Evidence | Covers | Does not cover |
 | --- | --- | --- |
