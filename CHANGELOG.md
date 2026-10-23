@@ -4,7 +4,20 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
-Pre-release personal proof of concept. Built in stages; see `docs/handoff/` for what each stage delivered.
+### Fixed
+- Release workflow: the image is now also tagged with the version without the `v` (for example `0.1.1`), which is the tag the Helm chart deploys by default.
+- Release workflow: the image is built with `VERSION`, so `team-memory version` reports the release instead of `0.0.0-dev`.
+- Release workflow: the image is built for `linux/amd64` and `linux/arm64` (0.1.0 was amd64 only).
+
+## [0.1.0] - 2026-10-23
+
+First tagged release of a personal proof of concept. Built in stages; see `docs/handoff/` for what each stage delivered.
+
+### Known issues
+- The chart's default image tag, `0.1.0`, was not published; install with `--set image.tag=v0.1.0`. The image reports version `0.0.0-dev` and is amd64 only. Fixed in the next release.
+
+### Security
+- Built with Go 1.27.3, which fixes GO-2026-6809 in `crypto/x509`.
 
 ### Changed
 - Positioned as a personal proof of concept: no external security review or real-project pilot is planned (README, SECURITY.md, release checklist).
