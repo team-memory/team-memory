@@ -6,7 +6,7 @@
 <label>Search <input name="q" type="search" value="{{.Query}}" maxlength="500"></label>
 <label>Mode <select name="mode"><option value="hybrid"{{if eq .Mode "hybrid"}} selected{{end}}>Hybrid</option><option value="fulltext"{{if eq .Mode "fulltext"}} selected{{end}}>Full-text</option><option value="vector"{{if eq .Mode "vector"}} selected{{end}}>Meaning only</option></select></label>
 <label>Kind <select name="kind"><option value="">Any</option>{{range .Kinds}}<option value="{{.}}"{{if eq (printf "%s" .) $.Data.Kind}} selected{{end}}>{{.}}</option>{{end}}</select></label>
-<label><input type="checkbox" name="overridden" value="1"> Include overridden</label>
+<label><input type="checkbox" name="overridden" value="1"{{if .ShowOver}} checked{{end}}> Include overridden</label>
 <button type="submit">Search</button>
 </form>
 <p>Searching <code>{{.Scope}}</code> and the scopes above it.</p>

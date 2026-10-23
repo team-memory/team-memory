@@ -2,7 +2,10 @@ package server
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/team-memory/team-memory/internal/portal"
 )
 
 func TestClientAddr(t *testing.T) {
@@ -40,5 +43,34 @@ func TestClientAddr(t *testing.T) {
 	}
 	if _, err := ParseTrustedProxies("10.0.0.0/33"); err == nil {
 		t.Error("bad CIDR accepted")
+	}
+}
+
+func TestPublicPagesWithPortalMounts(t *testing.T) {
+	for _, tc := range []struct {
+		name, base string
+		disabled   bool
+	}{
+		{"default", "", false}, {"custom", "/knowledge", false}, {"root", "/", false}, {"disabled", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(Options{PublicURL: "https://memory.example.com", Portal: portal.Config{BasePath: tc.base}, DisablePortal: tc.disabled})
+			for _, path := range []string{"/welcome", "/welcome/brand.css"} {
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+				if w.Code != 200 {
+					t.Fatalf("%s returned %d", path, w.Code)
+				}
+			}
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			if tc.base == "/" {
+				if w.Code != 303 && w.Code != 302 {
+					t.Fatalf("root portal should redirect to sign-in: %d", w.Code)
+				}
+			} else if w.Code != 200 || !strings.Contains(w.Body.String(), "Give your agents") {
+				t.Fatalf("homepage missing: %d", w.Code)
+			}
+		})
 	}
 }

@@ -151,6 +151,11 @@ func New(opts Options) *Server {
 			}
 		}
 	}
+	portalPath := ""
+	if s.portal != nil {
+		portalPath = s.portal.BasePath() + "/"
+	}
+	portal.RegisterPublic(mux, opts.PublicURL, portalPath, opts.SSOConfigPath != "")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /readyz", s.ready.serve)
 	base := ""
