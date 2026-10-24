@@ -74,5 +74,14 @@ RETURNING *;
 -- name: ListAuditEvents :many
 SELECT * FROM audit_events
 WHERE scope_id = ANY(@scope_ids::uuid[])
+ AND (@actor::text = '' OR actor_id::text = @actor)
+ AND (@action::text = '' OR action = @action)
+ AND (@outcome::text = '' OR outcome = @outcome)
+ AND (@target::text = '' OR target_id = @target)
+ AND (@client::text = '' OR details->'attribution'->>'client_name' = @client
+      OR details->'attribution'->>'application_name' = @client
+      OR details->'attribution'->>'oauth_client_id' = @client)
+ AND (sqlc.narg('since')::timestamptz IS NULL OR occurred_at >= sqlc.narg('since'))
+ AND (sqlc.narg('until')::timestamptz IS NULL OR occurred_at < sqlc.narg('until'))
 ORDER BY occurred_at DESC, id DESC
 LIMIT @max_results;

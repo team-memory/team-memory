@@ -31,7 +31,8 @@ type Principal struct {
 	// AuthOAuth or AuthPortal. Review completion requires AuthPortal, so
 	// MCP and API bearer calls can never approve or promote, even for a
 	// human maintainer's token.
-	AuthMethod string `json:"auth_method"`
+	AuthMethod  string      `json:"auth_method"`
+	Attribution Attribution `json:"-"`
 }
 
 func (p Principal) actor() postgres.Actor {
@@ -140,6 +141,8 @@ type OrgSettings struct {
 
 // Memory is the current state of a memory as seen from a requested scope.
 type Memory struct {
+	CreatedVia    Attribution `json:"created_via"`
+	RevisedVia    Attribution `json:"revised_via"`
 	ID            uuid.UUID   `json:"id"`
 	ScopeID       uuid.UUID   `json:"scope_id"`
 	OriginScope   string      `json:"origin_scope"`
@@ -202,16 +205,17 @@ type SearchResult struct {
 
 // Revision is an immutable content snapshot.
 type Revision struct {
-	Revision   int         `json:"revision"`
-	Kind       Kind        `json:"kind"`
-	Title      string      `json:"title"`
-	Content    string      `json:"content"`
-	Rationale  string      `json:"rationale,omitempty"`
-	SourceURI  string      `json:"source_uri,omitempty"`
-	Overrides  []uuid.UUID `json:"overrides,omitempty"`
-	ChangedBy  uuid.UUID   `json:"changed_by"`
-	ChangeNote string      `json:"change_note,omitempty"`
-	CreatedAt  time.Time   `json:"created_at"`
+	Attribution Attribution `json:"attribution"`
+	Revision    int         `json:"revision"`
+	Kind        Kind        `json:"kind"`
+	Title       string      `json:"title"`
+	Content     string      `json:"content"`
+	Rationale   string      `json:"rationale,omitempty"`
+	SourceURI   string      `json:"source_uri,omitempty"`
+	Overrides   []uuid.UUID `json:"overrides,omitempty"`
+	ChangedBy   uuid.UUID   `json:"changed_by"`
+	ChangeNote  string      `json:"change_note,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 // Event is an immutable lifecycle event bound to a revision.

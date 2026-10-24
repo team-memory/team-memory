@@ -19,6 +19,8 @@
 <dl class="prov">
 <dt>Origin scope</dt><dd><code>{{$m.OriginScope}}</code></dd>
 <dt>Author</dt><dd>{{nm .Names $m.CreatedBy}}, {{ts $m.CreatedAt}}</dd>
+<dt>Created via</dt><dd>{{template "attribution" $m.CreatedVia}}</dd>
+<dt>Last revised via</dt><dd>{{template "attribution" $m.RevisedVia}}</dd>
 <dt>Current revision</dt><dd>{{$m.Revision}} by {{nm .Names $m.RevisedBy}}, {{ts $m.UpdatedAt}}</dd>
 <dt>Approval</dt><dd>{{if eq (printf "%s" $m.Trust) "approved"}}{{with $m.Review}}Approved by {{nm $.Data.Names .Reviewer}} on {{ts .ReviewedAt}} (revision {{.Revision}}){{end}}{{else}}{{with $m.Review}}{{if eq .Decision "rejected"}}Rejected by {{nm $.Data.Names .Reviewer}} on {{ts .ReviewedAt}}{{else}}Not approved{{end}}{{else}}Not approved{{end}}{{end}}</dd>
 {{if $m.PromotedFrom}}<dt>Promoted from</dt><dd>{{if .Promoted}}<a href="{{u "/m/" .Promoted.ID.String}}">{{.Promoted.Title}}</a>{{end}}</dd>{{else if eq (printf "%s" $m.Status) "active"}}{{end}}
@@ -102,6 +104,7 @@
 <h2>History</h2>
 {{range .Revisions}}
 <details class="rev"><summary>Revision {{.Revision.Revision}} · {{.Author}} · {{ts .CreatedAt}}{{if .ChangeNote}} · {{first 80 .ChangeNote}}{{end}}{{if .Fields}} · changed: {{join .Fields ", "}}{{end}}</summary>
+<div class="meta">Saved via {{template "attribution" .Revision.Attribution}}</div>
 {{if .Diff}}<pre class="diff" aria-label="Content changes">{{range .Diff}}<span class="d{{if eq .Op "+"}} add{{else if eq .Op "-"}} del{{end}}">{{.Op}} {{.Text}}
 </span>{{end}}</pre>{{else if .DiffNote}}<p>{{.DiffNote}}</p>{{else if gt .Revision.Revision 1}}<p>Content unchanged.</p>{{else}}<pre class="diff">{{.Content}}</pre>{{end}}
 </details>

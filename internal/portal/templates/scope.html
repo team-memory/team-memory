@@ -3,7 +3,7 @@
 <p class="crumbs" aria-label="Scope path">{{range .Page.Ancestors}}<span>{{.Name}}</span> › {{end}}<strong>{{.Page.Scope.Name}}</strong> <span class="badge">{{.Page.Scope.Level}}</span> <span class="badge">your role: {{.Page.Role}}</span></p>
 <p class="actions">
 <a href="{{u "/search"}}?scope={{.Page.Scope.Path}}">Search here</a>
-{{if .CanReview}} · <a href="{{u "/review/" .Page.Scope.Path}}">Review queue</a> · <a href="{{u "/members/" .Page.Scope.Path}}">Members</a>{{end}}
+{{if .CanReview}} · <a href="{{u "/review/" .Page.Scope.Path}}">Review queue</a> · <a href="{{u "/members/" .Page.Scope.Path}}">Members</a> · <a href="{{u "/audit/" .Page.Scope.Path}}">Audit log</a>{{end}}
 </p>
 <form method="get" class="filters" action="{{scopeURL .Page.Scope.Path}}">
 <input type="hidden" name="tab" value="{{.Tab}}">

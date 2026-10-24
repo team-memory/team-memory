@@ -5,6 +5,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 ## [Unreleased]
 
 ### Added
+- Per-revision MCP client attribution, OAuth application and PAT audit references, and a maintainer audit page with actor, client, action, outcome, target, and date filters.
 - Branded public homepage with agent setup instructions for Codex and Claude Code, deployment-aware authentication guidance, and portal links.
 
 ### Changed
@@ -32,6 +33,7 @@ First tagged release of a personal proof of concept. Built in stages; see `docs/
 - README reorganized; setup docs corrected against the code.
 
 ### Added
+- Per-revision MCP client attribution, OAuth application and PAT audit references, and a maintainer audit page with actor, client, action, outcome, target, and date filters.
 - Isolated local Docker app/database stack and reproducible setup, Codex connection, testing and shutdown instructions.
 - Helm chart schema, icon and metadata; tag-triggered release workflow for the image and chart.
 - CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, NOTICE, issue and PR templates, client setup docs, release checklist (stage 07).

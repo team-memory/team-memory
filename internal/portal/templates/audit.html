@@ -1,0 +1,20 @@
+{{define "content"}}{{with .Data}}
+<p><a href="{{scopeURL .Scope}}">Back to scope</a> · <code>{{.Scope}}</code></p>
+<p>Maintainer audit log. Client-reported names describe software; they do not establish identity. Times are UTC.</p>
+<form method="get" class="filters">
+<label>Actor ID <input name="actor" value="{{.Filter.Actor}}"></label>
+<label>Client name or OAuth ID <input name="client" value="{{.Filter.Client}}"></label>
+<label>Action <input name="action" value="{{.Filter.Action}}" placeholder="memory.create"></label>
+<label>Outcome <select name="outcome"><option value="">Any</option>{{range $x := (outcomes)}}<option value="{{$x}}"{{if eq $x $.Data.Filter.Outcome}} selected{{end}}>{{$x}}</option>{{end}}</select></label>
+<label>Memory / target ID <input name="target" value="{{.Filter.Target}}"></label>
+<label>From <input type="date" name="since" value="{{.Since}}"></label>
+<label>Through <input type="date" name="until" value="{{.Until}}"></label>
+<button type="submit">Filter</button>
+</form>
+<p class="hint">Showing up to {{.Limit}} newest matching events in this scope. Filters match exact values. Narrow the dates to find older events. Scope-less denials are restricted to operators.</p>
+{{range .Rows}}
+<article><p>{{ts .OccurredAt}} · <strong>{{.Action}}</strong> · {{.Outcome}} · {{nm $.Data.Names .ActorID}}</p>
+<p>Via {{.Client}} · {{.TargetType}} <code>{{.TargetID}}</code></p>
+<details><summary>Audit details and correlation IDs</summary><p>Actor: {{.ActorID}} · Request: {{.RequestID}}</p><pre>{{.Detail}}</pre></details></article>
+{{else}}<p>No matching audit events.</p>{{end}}
+{{end}}{{end}}

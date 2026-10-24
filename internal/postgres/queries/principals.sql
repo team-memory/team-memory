@@ -13,7 +13,7 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING id, principal_id, name, token_prefix, created_at, expires_at;
 
 -- name: LookupPersonalAccessToken :one
-SELECT t.id, t.principal_id, t.expires_at, t.revoked_at, p.kind, p.display_name, p.disabled_at
+SELECT t.id, t.name, t.principal_id, t.expires_at, t.revoked_at, p.kind, p.display_name, p.disabled_at
 FROM personal_access_tokens t
 JOIN principals p ON p.id = t.principal_id
 WHERE t.token_hash = $1;

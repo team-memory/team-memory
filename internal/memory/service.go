@@ -219,7 +219,7 @@ func eventSnapshot(m db.Memory, extra map[string]any) []byte {
 func recordEvent(ctx context.Context, tx postgres.Tx, m db.Memory, typ string, actor uuid.UUID, extra map[string]any) error {
 	_, err := tx.Q.InsertMemoryEvent(ctx, db.InsertMemoryEventParams{
 		OrgID: m.OrgID, ScopeID: m.ScopeID, MemoryID: m.ID, Revision: m.CurrentRevision,
-		EventType: typ, ActorID: actor, Snapshot: eventSnapshot(m, extra),
+		EventType: typ, ActorID: actor, Snapshot: eventSnapshot(m, withPublicAttribution(ctx, extra)),
 	})
 	return err
 }
@@ -228,7 +228,7 @@ func insertRevision(ctx context.Context, tx postgres.Tx, m db.Memory, rev int32,
 	if _, err := tx.Q.InsertRevision(ctx, db.InsertRevisionParams{
 		MemoryID: m.ID, Revision: rev, OrgID: m.OrgID, ScopeID: m.ScopeID, Kind: string(c.kind),
 		Title: c.title, Content: c.content, Rationale: c.rationale, SourceUri: stringPtr(c.sourceURI),
-		ChangedBy: actor, ChangeNote: c.changeNote,
+		ChangedBy: actor, ChangeNote: c.changeNote, Attribution: attributionJSON(ctx),
 	}); err != nil {
 		return mapDBError(err)
 	}
@@ -260,7 +260,7 @@ func createInTx(ctx context.Context, tx postgres.Tx, p Principal, sc db.Scope, c
 	if err := recordEvent(ctx, tx, m, "created", p.ID, nil); err != nil {
 		return db.Memory{}, err
 	}
-	return m, audit(ctx, tx, m.OrgID, p.ID, "memory.create", "memory", m.ID.String(), &m.ScopeID, nil)
+	return m, audit(ctx, tx, m.OrgID, p.ID, "memory.create", "memory", m.ID.String(), &m.ScopeID, map[string]any{"revision": m.CurrentRevision})
 }
 
 // Create records a new memory in a scope. Requires writer on the scope.
@@ -639,6 +639,7 @@ func getInTx(ctx context.Context, q *db.Queries, p Principal, id, viewFrom uuid.
 		return Memory{}, err
 	}
 	m := Memory{
+		CreatedVia: decodeAttribution(v.CreatedAttribution), RevisedVia: decodeAttribution(v.Attribution),
 		ID: v.ID, ScopeID: v.ScopeID, OriginScope: v.ScopePath, Inherited: inherited,
 		Kind: Kind(v.Kind), Status: Status(v.Status), Trust: Trust(v.Trust),
 		Revision: int(v.CurrentRevision), StateVersion: v.StateVersion,
@@ -703,7 +704,8 @@ func (s *Service) History(ctx context.Context, p Principal, id uuid.UUID) (Histo
 		}
 		for _, r := range revs {
 			rev := Revision{
-				Revision: int(r.Revision), Kind: Kind(r.Kind), Title: r.Title, Content: r.Content,
+				Attribution: decodeAttribution(r.Attribution),
+				Revision:    int(r.Revision), Kind: Kind(r.Kind), Title: r.Title, Content: r.Content,
 				Rationale: r.Rationale, SourceURI: deref(r.SourceUri), ChangedBy: r.ChangedBy,
 				ChangeNote: r.ChangeNote, CreatedAt: r.CreatedAt,
 			}

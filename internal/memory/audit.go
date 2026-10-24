@@ -51,7 +51,12 @@ type AuditEvent struct {
 
 // InsertAudit appends an audit event inside q's transaction.
 func InsertAudit(ctx context.Context, q *db.Queries, e AuditEvent) error {
-	b, err := jsonBytes(e.Details)
+	details := map[string]any{}
+	for k, v := range e.Details {
+		details[k] = v
+	}
+	details["attribution"] = AttributionFrom(ctx)
+	b, err := jsonBytes(details)
 	if err != nil {
 		return err
 	}

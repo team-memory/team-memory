@@ -325,17 +325,43 @@ func (q *Queries) LatestReviewOutcome(ctx context.Context, arg LatestReviewOutco
 const listAuditEvents = `-- name: ListAuditEvents :many
 SELECT id, org_id, occurred_at, actor_id, action, target_type, target_id, scope_id, outcome, details, request_id FROM audit_events
 WHERE scope_id = ANY($1::uuid[])
+ AND ($2::text = '' OR actor_id::text = $2)
+ AND ($3::text = '' OR action = $3)
+ AND ($4::text = '' OR outcome = $4)
+ AND ($5::text = '' OR target_id = $5)
+ AND ($6::text = '' OR details->'attribution'->>'client_name' = $6
+      OR details->'attribution'->>'application_name' = $6
+      OR details->'attribution'->>'oauth_client_id' = $6)
+ AND ($7::timestamptz IS NULL OR occurred_at >= $7)
+ AND ($8::timestamptz IS NULL OR occurred_at < $8)
 ORDER BY occurred_at DESC, id DESC
-LIMIT $2
+LIMIT $9
 `
 
 type ListAuditEventsParams struct {
 	ScopeIds   []uuid.UUID
+	Actor      string
+	Action     string
+	Outcome    string
+	Target     string
+	Client     string
+	Since      *time.Time
+	Until      *time.Time
 	MaxResults int32
 }
 
 func (q *Queries) ListAuditEvents(ctx context.Context, arg ListAuditEventsParams) ([]AuditEvent, error) {
-	rows, err := q.db.Query(ctx, listAuditEvents, arg.ScopeIds, arg.MaxResults)
+	rows, err := q.db.Query(ctx, listAuditEvents,
+		arg.ScopeIds,
+		arg.Actor,
+		arg.Action,
+		arg.Outcome,
+		arg.Target,
+		arg.Client,
+		arg.Since,
+		arg.Until,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}

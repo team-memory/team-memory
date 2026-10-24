@@ -118,6 +118,7 @@ func New(cfg *Config, opts Options) (*Server, error) {
 		}
 	}
 	s.verifier = NewAccessTokens(cfg.Issuer, cfg.Resource(), keys, opts.Identities)
+	s.verifier.clients = s.clients
 
 	opOpts := []op.Option{
 		op.WithCustomAuthEndpoint(op.NewEndpoint(strings.TrimPrefix(pathAuthorize, "/"))),

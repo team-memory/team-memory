@@ -210,6 +210,25 @@ func observeTools(o ToolObserver) mcp.Middleware {
 			if r, ok := req.(*mcp.CallToolRequest); ok && r.Params != nil && knownTools[r.Params.Name] {
 				tool = r.Params.Name
 			}
+			if r, ok := req.(*mcp.CallToolRequest); ok {
+				a := memory.Attribution{}
+				if p, err := principalFrom(r.Extra); err == nil {
+					a = p.Attribution
+					a.AuthMethod = p.AuthMethod
+				}
+				a.Channel = "mcp"
+				a.Tool = tool
+				a.ServerVersion = Version
+				a.ProtocolVersion = r.ProtocolVersion()
+				a.RequestID = memory.RequestID(ctx)
+				a.TraceID = telemetry.TraceID(ctx)
+				if info := r.ClientInfo(); info != nil {
+					a.ClientName = info.Name
+					a.ClientVersion = info.Version
+					a.ClientSource = "mcp_client_info"
+				}
+				ctx = memory.WithAttribution(ctx, a)
+			}
 			ctx, span := telemetry.Tracer.Start(ctx, "mcp.tool "+tool, trace.WithAttributes(attribute.String("mcp.tool.name", tool)))
 			defer span.End()
 			start := time.Now()

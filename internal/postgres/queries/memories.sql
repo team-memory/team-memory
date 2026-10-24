@@ -7,9 +7,9 @@ RETURNING *;
 
 -- name: InsertRevision :one
 INSERT INTO memory_revisions (memory_id, revision, org_id, scope_id, kind, title, content,
-                              rationale, source_uri, changed_by, change_note)
+                              rationale, source_uri, changed_by, change_note, attribution)
 VALUES (@memory_id, @revision, @org_id, @scope_id, @kind, @title, @content,
-        @rationale, sqlc.narg('source_uri'), @changed_by, @change_note)
+        @rationale, sqlc.narg('source_uri'), @changed_by, @change_note, @attribution)
 RETURNING memory_id, revision, created_at;
 
 -- name: InsertRevisionOverride :exec
@@ -58,11 +58,13 @@ SELECT m.id, m.org_id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.tru
        m.current_revision, m.state_version, m.superseded_by,
        m.promoted_from_memory_id, m.promoted_from_revision,
        m.created_by, m.created_at, m.updated_at,
+       r.attribution, first_revision.attribution AS created_attribution,
        r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at,
        ap.decision AS review_decision, ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+JOIN memory_revisions first_revision ON first_revision.memory_id = m.id AND first_revision.revision = 1
 -- Latest review outcome of the current revision.
 LEFT JOIN approvals ap ON ap.id = (
     SELECT a.id FROM approvals a
@@ -72,7 +74,7 @@ WHERE m.id = $1;
 
 -- name: ListRevisions :many
 SELECT memory_id, revision, org_id, scope_id, kind, title, content, rationale,
-       source_uri, changed_by, change_note, created_at
+       source_uri, changed_by, change_note, created_at, attribution
 FROM memory_revisions
 WHERE memory_id = $1
 ORDER BY revision;
