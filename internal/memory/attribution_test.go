@@ -25,3 +25,15 @@ func TestAttributionBoundsAndRedaction(t *testing.T) {
 		t.Fatal("legacy attribution inferred")
 	}
 }
+
+func TestAttributionSummaryLabelsClientSource(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{ClientSourceMCPClientInfo, "codex · 1 (client-reported)"},
+		{ClientSourceUserAgent, "codex · 1 (HTTP user agent)"},
+	} {
+		got := Attribution{ClientName: "codex", ClientVersion: "1", ClientSource: tc.source}.Summary()
+		if got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}

@@ -124,6 +124,9 @@ func TestMCPProtocol(t *testing.T) {
 			if version == "2026-07-28" && via["client_name"] != "integration-test" {
 				t.Fatalf("client info: %v", via)
 			}
+			if version == "2025-11-25" && (via["client_name"] == nil || via["client_source"] != "user_agent") {
+				t.Fatalf("user agent fallback: %v", via)
+			}
 			if _, ok := via["credential_id"]; ok {
 				t.Fatal("credential ID leaked")
 			}

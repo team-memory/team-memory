@@ -225,7 +225,15 @@ func observeTools(o ToolObserver) mcp.Middleware {
 				if info := r.ClientInfo(); info != nil {
 					a.ClientName = info.Name
 					a.ClientVersion = info.Version
-					a.ClientSource = "mcp_client_info"
+					a.ClientSource = memory.ClientSourceMCPClientInfo
+				} else if r.Extra != nil {
+					// Stateless serving drops the initialize handshake, so a
+					// 2025-11-25 client has no clientInfo here. The User-Agent
+					// is a weaker, still descriptive, signal and is labelled so.
+					if ua := strings.TrimSpace(r.Extra.Header.Get("User-Agent")); ua != "" {
+						a.ClientName = ua
+						a.ClientSource = memory.ClientSourceUserAgent
+					}
 				}
 				ctx = memory.WithAttribution(ctx, a)
 			}

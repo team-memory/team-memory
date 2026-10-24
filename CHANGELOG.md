@@ -12,6 +12,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 - Refreshed portal and OAuth consent styling with responsive layouts and shared branding.
 
 ### Fixed
+- Client attribution now falls back to the HTTP `User-Agent` (labelled "HTTP user agent") when an MCP client sends no `clientInfo`, which stateless serving otherwise loses for 2025-11-25 clients.
 - Helm ingress now routes the public homepage and welcome page assets, using an exact root route to avoid exposing operational endpoints.
 - Search now preserves the Include overridden checkbox after submitting filters.
 - Release workflow: the image is now also tagged with the version without the `v` (for example `0.1.1`), which is the tag the Helm chart deploys by default.

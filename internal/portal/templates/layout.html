@@ -56,7 +56,7 @@
 {{if .Channel}}<details><summary>Client metadata</summary><dl class="prov">
 <dt>Entry point</dt><dd>{{.Channel}}</dd>
 <dt>Authentication</dt><dd>{{.AuthMethod}}</dd>
-<dt>MCP client name</dt><dd>{{if .ClientName}}{{.ClientName}} (client-reported){{else}}Not recorded{{end}}</dd>
+<dt>MCP client name</dt><dd>{{if .ClientName}}{{.ClientName}} ({{.ClientNameLabel}}){{else}}Not recorded{{end}}</dd>
 {{if .ClientVersion}}<dt>Client version</dt><dd>{{.ClientVersion}}</dd>{{end}}
 {{if .ApplicationName}}<dt>OAuth application</dt><dd>{{.ApplicationName}}</dd>{{end}}
 {{if .Tool}}<dt>Tool</dt><dd>{{.Tool}}</dd>{{end}}
