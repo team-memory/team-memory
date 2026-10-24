@@ -7,6 +7,12 @@ import (
 	"unicode"
 )
 
+// Values of Attribution.ClientSource.
+const (
+	ClientSourceMCPClientInfo = "mcp_client_info"
+	ClientSourceUserAgent     = "user_agent"
+)
+
 // Attribution is a bounded snapshot supplied by transport/authentication adapters.
 // Reported client names are descriptive, never authorization evidence.
 type Attribution struct {
@@ -75,7 +81,7 @@ func (a Attribution) Summary() string {
 		if a.ClientVersion != "" {
 			s += " · " + a.ClientVersion
 		}
-		return s + " (client-reported)"
+		return s + " (" + a.ClientNameLabel() + ")"
 	}
 	if a.ApplicationName != "" {
 		return a.ApplicationName + " (OAuth application)"
@@ -84,6 +90,14 @@ func (a Attribution) Summary() string {
 		return a.Channel + " · client not recorded"
 	}
 	return "Not recorded"
+}
+
+// ClientNameLabel says how ClientName was obtained.
+func (a Attribution) ClientNameLabel() string {
+	if a.ClientSource == ClientSourceUserAgent {
+		return "HTTP user agent"
+	}
+	return "client-reported"
 }
 
 func withPublicAttribution(ctx context.Context, extra map[string]any) map[string]any {
