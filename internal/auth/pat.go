@@ -137,7 +137,7 @@ func (a *PATs) Authenticate(ctx context.Context, credential string) (memory.Prin
 		if err := tx.Q.TouchPersonalAccessToken(ctx, row.ID); err != nil {
 			return err
 		}
-		p = memory.Principal{ID: row.PrincipalID, Kind: row.Kind, DisplayName: row.DisplayName, AuthMethod: "pat"}
+		p = memory.Principal{ID: row.PrincipalID, Kind: row.Kind, DisplayName: row.DisplayName, AuthMethod: "pat", Attribution: memory.Attribution{AuthMethod: "pat", CredentialID: row.ID.String(), CredentialLabel: row.Name}}
 		exp = row.ExpiresAt
 		return nil
 	})

@@ -50,3 +50,17 @@
 {{if or (eq (printf "%s" .Trust) "unverified") (eq (printf "%s" .Trust) "cited")}}<p class="notice">Agent or contributor proposal. Not reviewed by a maintainer: do not treat as team policy.</p>{{end}}
 <div class="content">{{md (first 400 .Content)}}</div>
 </article>{{end}}
+
+{{define "attribution"}}
+{{.Summary}}
+{{if .Channel}}<details><summary>Client metadata</summary><dl class="prov">
+<dt>Entry point</dt><dd>{{.Channel}}</dd>
+<dt>Authentication</dt><dd>{{.AuthMethod}}</dd>
+<dt>MCP client name</dt><dd>{{if .ClientName}}{{.ClientName}} (client-reported){{else}}Not recorded{{end}}</dd>
+{{if .ClientVersion}}<dt>Client version</dt><dd>{{.ClientVersion}}</dd>{{end}}
+{{if .ApplicationName}}<dt>OAuth application</dt><dd>{{.ApplicationName}}</dd>{{end}}
+{{if .Tool}}<dt>Tool</dt><dd>{{.Tool}}</dd>{{end}}
+{{if .ProtocolVersion}}<dt>MCP protocol</dt><dd>{{.ProtocolVersion}}</dd>{{end}}
+{{if .ServerVersion}}<dt>Server version</dt><dd>{{.ServerVersion}}</dd>{{end}}
+</dl></details>{{end}}
+{{end}}

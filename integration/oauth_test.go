@@ -359,6 +359,14 @@ func TestOAuthLoginEndToEnd(t *testing.T) {
 	if isErr {
 		t.Fatalf("memory_create: %v", out)
 	}
+	via := out["created_via"].(map[string]any)
+	if via["application_name"] != "oauth-test" || via["auth_method"] != "oauth" {
+		t.Fatalf("OAuth attribution: %v", via)
+	}
+	var appID string
+	if err := env.tr.db.Admin.QueryRow(ctx, "SELECT details->'attribution'->>'oauth_client_id' FROM audit_events WHERE action='memory.create' AND target_id=$1", out["id"]).Scan(&appID); err != nil || !strings.HasPrefix(appID, "tmc_") {
+		t.Fatalf("OAuth audit client: %q %v", appID, err)
+	}
 	var creator string
 	if err := env.tr.db.Admin.QueryRow(ctx, "SELECT created_by::text FROM memories WHERE id = $1", out["id"]).Scan(&creator); err != nil || creator != alice.ID.String() {
 		t.Fatalf("memory created by %s (%v), want linked principal %s", creator, err, alice.ID)

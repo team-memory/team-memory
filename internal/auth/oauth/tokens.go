@@ -33,6 +33,7 @@ type AccessTokens struct {
 	keys       *Keyring
 	identities *auth.Identities
 	now        func() time.Time
+	clients    *clientRegistry
 }
 
 // NewAccessTokens builds a verifier. It is exported for tests and for the
@@ -133,5 +134,11 @@ func (v *AccessTokens) Authenticate(ctx context.Context, raw string) (memory.Pri
 		return memory.Principal{}, time.Time{}, err
 	}
 	p.AuthMethod = "oauth"
+	p.Attribution = memory.Attribution{AuthMethod: "oauth", OAuthClientID: c.ClientID}
+	if v.clients != nil && c.ClientID != "" {
+		if client, err := v.clients.get(ctx, c.ClientID); err == nil {
+			p.Attribution.ApplicationName = client.name
+		}
+	}
 	return p, time.Unix(*c.Expiry, 0), nil
 }

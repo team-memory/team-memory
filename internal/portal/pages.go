@@ -53,6 +53,7 @@ var errFlashes = map[string]string{
 
 func (p *Portal) funcs() template.FuncMap {
 	return template.FuncMap{
+		"outcomes": func() []string { return []string{"success", "denied", "error"} },
 		"md":       p.render.Markdown,
 		"link":     p.render.Link,
 		"u":        func(parts ...string) string { return p.base + strings.Join(parts, "") },

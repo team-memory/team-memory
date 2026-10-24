@@ -106,3 +106,20 @@ test('phone width: no horizontal scroll, keyboard reaches the search box', async
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
 });
+
+
+test('maintainers can filter audit events and readers cannot open the audit page', async ({ page }) => {
+  await signIn(page, env('TOKEN_MAINT'));
+  await page.goto('/portal/s/acme/platform/payments');
+  await page.getByRole('link', { name: 'Audit log', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Audit log', exact: true })).toBeVisible();
+  await page.getByLabel('Action', { exact: true }).fill('memory.create');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.locator('article').first()).toContainText('memory.create');
+  await page.getByLabel('Client name or OAuth ID').fill('no-such-client');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByText('No matching audit events.')).toBeVisible();
+  await signIn(page, env('TOKEN_READER'));
+  const res = await page.goto('/portal/audit/acme/platform/payments');
+  expect(res?.status()).toBe(403);
+});

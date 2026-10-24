@@ -139,19 +139,20 @@ type MemoryEvent struct {
 }
 
 type MemoryRevision struct {
-	MemoryID   uuid.UUID
-	Revision   int32
-	OrgID      uuid.UUID
-	ScopeID    uuid.UUID
-	Kind       string
-	Title      string
-	Content    string
-	Rationale  string
-	SourceUri  *string
-	ChangedBy  uuid.UUID
-	ChangeNote string
-	CreatedAt  time.Time
-	Search     interface{}
+	MemoryID    uuid.UUID
+	Revision    int32
+	OrgID       uuid.UUID
+	ScopeID     uuid.UUID
+	Kind        string
+	Title       string
+	Content     string
+	Rationale   string
+	SourceUri   *string
+	ChangedBy   uuid.UUID
+	ChangeNote  string
+	CreatedAt   time.Time
+	Search      interface{}
+	Attribution []byte
 }
 
 type MirrorSetting struct {

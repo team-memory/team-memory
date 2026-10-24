@@ -205,9 +205,19 @@ type AuditEntry struct {
 	Details    map[string]any `json:"details"`
 }
 
-// AuditLog returns recent audit events of a scope. Requires maintainer;
-// RLS limits rows to scopes the reader maintains.
+// AuditFilter restricts events before ordering and limiting the result.
+type AuditFilter struct {
+	Actor, Client, Action, Outcome, Target string
+	Since, Until                           *time.Time
+}
+
+// AuditLog returns recent events in a scope the caller maintains.
 func (s *Service) AuditLog(ctx context.Context, p Principal, scopeRef string, limit int) ([]AuditEntry, error) {
+	return s.FilteredAuditLog(ctx, p, scopeRef, limit, AuditFilter{})
+}
+
+// FilteredAuditLog applies exact filters within the same scope authorization and RLS.
+func (s *Service) FilteredAuditLog(ctx context.Context, p Principal, scopeRef string, limit int, f AuditFilter) ([]AuditEntry, error) {
 	var out []AuditEntry
 	err := postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
 		sc, err := resolveScope(ctx, tx.Q, scopeRef)
@@ -220,7 +230,11 @@ func (s *Service) AuditLog(ctx context.Context, p Principal, scopeRef string, li
 			}
 			return err
 		}
-		rows, err := tx.Q.ListAuditEvents(ctx, db.ListAuditEventsParams{ScopeIds: []uuid.UUID{sc.ID}, MaxResults: int32(ClampLimit(limit))})
+		rows, err := tx.Q.ListAuditEvents(ctx, db.ListAuditEventsParams{
+			ScopeIds: []uuid.UUID{sc.ID}, MaxResults: int32(ClampLimit(limit)),
+			Actor: f.Actor, Client: f.Client, Action: f.Action, Outcome: f.Outcome,
+			Target: f.Target, Since: f.Since, Until: f.Until,
+		})
 		if err != nil {
 			return err
 		}

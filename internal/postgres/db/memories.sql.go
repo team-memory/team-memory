@@ -28,11 +28,13 @@ SELECT m.id, m.org_id, m.scope_id, s.path AS scope_path, m.kind, m.status, m.tru
        m.current_revision, m.state_version, m.superseded_by,
        m.promoted_from_memory_id, m.promoted_from_revision,
        m.created_by, m.created_at, m.updated_at,
+       r.attribution, first_revision.attribution AS created_attribution,
        r.title, r.content, r.rationale, r.source_uri, r.changed_by, r.created_at AS revised_at,
        ap.decision AS review_decision, ap.reviewer_id, ap.decided_at AS reviewed_at
 FROM memories m
 JOIN memory_revisions r ON r.memory_id = m.id AND r.revision = m.current_revision
 JOIN scopes s ON s.id = m.scope_id
+JOIN memory_revisions first_revision ON first_revision.memory_id = m.id AND first_revision.revision = 1
 LEFT JOIN approvals ap ON ap.id = (
     SELECT a.id FROM approvals a
     WHERE a.memory_id = m.id AND a.revision = m.current_revision
@@ -56,6 +58,8 @@ type GetMemoryViewRow struct {
 	CreatedBy            uuid.UUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+	Attribution          []byte
+	CreatedAttribution   []byte
 	Title                string
 	Content              string
 	Rationale            string
@@ -87,6 +91,8 @@ func (q *Queries) GetMemoryView(ctx context.Context, id uuid.UUID) (GetMemoryVie
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Attribution,
+		&i.CreatedAttribution,
 		&i.Title,
 		&i.Content,
 		&i.Rationale,
@@ -187,24 +193,25 @@ func (q *Queries) InsertMemoryEvent(ctx context.Context, arg InsertMemoryEventPa
 
 const insertRevision = `-- name: InsertRevision :one
 INSERT INTO memory_revisions (memory_id, revision, org_id, scope_id, kind, title, content,
-                              rationale, source_uri, changed_by, change_note)
+                              rationale, source_uri, changed_by, change_note, attribution)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11)
+        $8, $9, $10, $11, $12)
 RETURNING memory_id, revision, created_at
 `
 
 type InsertRevisionParams struct {
-	MemoryID   uuid.UUID
-	Revision   int32
-	OrgID      uuid.UUID
-	ScopeID    uuid.UUID
-	Kind       string
-	Title      string
-	Content    string
-	Rationale  string
-	SourceUri  *string
-	ChangedBy  uuid.UUID
-	ChangeNote string
+	MemoryID    uuid.UUID
+	Revision    int32
+	OrgID       uuid.UUID
+	ScopeID     uuid.UUID
+	Kind        string
+	Title       string
+	Content     string
+	Rationale   string
+	SourceUri   *string
+	ChangedBy   uuid.UUID
+	ChangeNote  string
+	Attribution []byte
 }
 
 type InsertRevisionRow struct {
@@ -226,6 +233,7 @@ func (q *Queries) InsertRevision(ctx context.Context, arg InsertRevisionParams) 
 		arg.SourceUri,
 		arg.ChangedBy,
 		arg.ChangeNote,
+		arg.Attribution,
 	)
 	var i InsertRevisionRow
 	err := row.Scan(&i.MemoryID, &i.Revision, &i.CreatedAt)
@@ -335,25 +343,26 @@ func (q *Queries) ListRevisionOverrides(ctx context.Context, memoryID uuid.UUID)
 
 const listRevisions = `-- name: ListRevisions :many
 SELECT memory_id, revision, org_id, scope_id, kind, title, content, rationale,
-       source_uri, changed_by, change_note, created_at
+       source_uri, changed_by, change_note, created_at, attribution
 FROM memory_revisions
 WHERE memory_id = $1
 ORDER BY revision
 `
 
 type ListRevisionsRow struct {
-	MemoryID   uuid.UUID
-	Revision   int32
-	OrgID      uuid.UUID
-	ScopeID    uuid.UUID
-	Kind       string
-	Title      string
-	Content    string
-	Rationale  string
-	SourceUri  *string
-	ChangedBy  uuid.UUID
-	ChangeNote string
-	CreatedAt  time.Time
+	MemoryID    uuid.UUID
+	Revision    int32
+	OrgID       uuid.UUID
+	ScopeID     uuid.UUID
+	Kind        string
+	Title       string
+	Content     string
+	Rationale   string
+	SourceUri   *string
+	ChangedBy   uuid.UUID
+	ChangeNote  string
+	CreatedAt   time.Time
+	Attribution []byte
 }
 
 func (q *Queries) ListRevisions(ctx context.Context, memoryID uuid.UUID) ([]ListRevisionsRow, error) {
@@ -378,6 +387,7 @@ func (q *Queries) ListRevisions(ctx context.Context, memoryID uuid.UUID) ([]List
 			&i.ChangedBy,
 			&i.ChangeNote,
 			&i.CreatedAt,
+			&i.Attribution,
 		); err != nil {
 			return nil, err
 		}

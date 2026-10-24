@@ -129,7 +129,7 @@ func New(opts Options) *Server {
 		if pcfg.PublicURL == "" {
 			pcfg.PublicURL = opts.PublicURL
 		}
-		popts := portal.Options{Config: pcfg, Pool: opts.Pool, Memory: svc, Search: opts.Search,
+		popts := portal.Options{ServerVersion: mcp.Version, Config: pcfg, Pool: opts.Pool, Memory: svc, Search: opts.Search,
 			Identities: auth.NewIdentities(opts.Pool), PATs: pats, Failures: failures, Logger: opts.Logger}
 		if s.sso != nil {
 			popts.SSO = s.sso

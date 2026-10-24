@@ -85,6 +85,7 @@ func main() {
 }
 
 func run(ctx context.Context, cmd string, args []string) error {
+	ctx = memory.WithAttribution(ctx, memory.Attribution{Channel: "cli", ServerVersion: mcp.Version})
 	switch cmd {
 	case "serve":
 		return serve(ctx, args)

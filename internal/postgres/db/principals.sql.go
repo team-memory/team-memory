@@ -296,7 +296,7 @@ func (q *Queries) ListPrincipals(ctx context.Context) ([]Principal, error) {
 }
 
 const lookupPersonalAccessToken = `-- name: LookupPersonalAccessToken :one
-SELECT t.id, t.principal_id, t.expires_at, t.revoked_at, p.kind, p.display_name, p.disabled_at
+SELECT t.id, t.name, t.principal_id, t.expires_at, t.revoked_at, p.kind, p.display_name, p.disabled_at
 FROM personal_access_tokens t
 JOIN principals p ON p.id = t.principal_id
 WHERE t.token_hash = $1
@@ -304,6 +304,7 @@ WHERE t.token_hash = $1
 
 type LookupPersonalAccessTokenRow struct {
 	ID          uuid.UUID
+	Name        string
 	PrincipalID uuid.UUID
 	ExpiresAt   time.Time
 	RevokedAt   *time.Time
@@ -317,6 +318,7 @@ func (q *Queries) LookupPersonalAccessToken(ctx context.Context, tokenHash []byt
 	var i LookupPersonalAccessTokenRow
 	err := row.Scan(
 		&i.ID,
+		&i.Name,
 		&i.PrincipalID,
 		&i.ExpiresAt,
 		&i.RevokedAt,

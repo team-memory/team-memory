@@ -117,6 +117,16 @@ func TestMCPProtocol(t *testing.T) {
 			if isErr || created["trust"] != "cited" || created["revision"].(float64) != 1 {
 				t.Fatalf("create: %v", created)
 			}
+			via := created["created_via"].(map[string]any)
+			if via["channel"] != "mcp" || via["auth_method"] != "pat" {
+				t.Fatalf("attribution: %v", via)
+			}
+			if version == "2026-07-28" && via["client_name"] != "integration-test" {
+				t.Fatalf("client info: %v", via)
+			}
+			if _, ok := via["credential_id"]; ok {
+				t.Fatal("credential ID leaked")
+			}
 			id := created["id"].(string)
 
 			updated, isErr := call(t, cs, "memory_update", map[string]any{"id": id, "expected_revision": 1,

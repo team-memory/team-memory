@@ -28,6 +28,7 @@ import (
 	"github.com/team-memory/team-memory/internal/memory"
 	"github.com/team-memory/team-memory/internal/ratelimit"
 	"github.com/team-memory/team-memory/internal/search"
+	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
 //go:embed templates/*.html static/* public/*.html
@@ -98,16 +99,17 @@ func (c Config) Validate() error {
 
 // Options carries the portal's dependencies.
 type Options struct {
-	Config     Config
-	Pool       *pgxpool.Pool
-	Memory     *memory.Service
-	Search     *search.Service
-	Identities *auth.Identities
-	PATs       *auth.PATs
-	Failures   *auth.FailureAuditor
-	SSO        SSO
-	Logger     *slog.Logger
-	Now        func() time.Time
+	Config        Config
+	Pool          *pgxpool.Pool
+	Memory        *memory.Service
+	Search        *search.Service
+	Identities    *auth.Identities
+	PATs          *auth.PATs
+	Failures      *auth.FailureAuditor
+	SSO           SSO
+	Logger        *slog.Logger
+	Now           func() time.Time
+	ServerVersion string
 }
 
 // Portal serves the web UI.
@@ -238,6 +240,7 @@ func (p *Portal) Register(mux *http.ServeMux) {
 	h("GET "+b+"/search", p.authed(p.searchPage))
 	h("GET "+b+"/s/{path...}", p.authed(p.scopePage))
 	h("GET "+b+"/members/{path...}", p.authed(p.membersPage))
+	h("GET "+b+"/audit/{path...}", p.authed(p.auditPage))
 	h("GET "+b+"/review/{path...}", p.authed(p.reviewPage))
 	h("GET "+b+"/m/{id}", p.authed(p.memoryPage))
 	h("POST "+b+"/m/{id}/approve", p.authed(p.approve))
@@ -350,6 +353,7 @@ func (p *Portal) authed(next func(http.ResponseWriter, *http.Request, *req) erro
 			return
 		}
 		pr.AuthMethod = memory.AuthPortal
+		r = r.WithContext(memory.WithAttribution(r.Context(), memory.Attribution{Channel: "portal", AuthMethod: memory.AuthPortal, RequestID: memory.RequestID(r.Context()), ServerVersion: p.o.ServerVersion, TraceID: telemetry.TraceID(r.Context())}))
 		rq := &req{r: r, w: w, sess: sess, p: pr}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if err := p.checkOrigin(r); err != nil || !csrfOK(r, sess.CSRF) {
