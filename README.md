@@ -6,7 +6,7 @@ A self-hosted, permission-aware shared memory for developers and their AI coding
 
 This repository holds both the service code and its planning material ([`proposal.md`](proposal.md), [`review-decisions.md`](review-decisions.md), [`prompts/`](prompts/)).
 
-**Contents:** [What it does](#what-it-does) · [Quickstart](#quickstart) · [Connect a client](#connect-a-client) · [Semantic search](#semantic-search-optional) · [Single sign-on](#single-sign-on-optional) · [Operator CLI](#operator-cli-scopes-members-and-tokens) · [MCP surface](#mcp-surface) · [Deploying](#deploying) · [Development](#development) · [Documentation map](#documentation-map) · [Limitations](#status-and-limitations)
+**Contents:** [What it does](#what-it-does) · [See it in action](#see-it-in-action) · [Quickstart](#quickstart) · [Connect a client](#connect-a-client) · [Semantic search](#semantic-search-optional) · [Single sign-on](#single-sign-on-optional) · [Operator CLI](#operator-cli-scopes-members-and-tokens) · [MCP surface](#mcp-surface) · [Deploying](#deploying) · [Development](#development) · [Documentation map](#documentation-map) · [Limitations](#status-and-limitations)
 
 ## What it does
 
@@ -20,6 +20,14 @@ This repository holds both the service code and its planning material ([`proposa
 - **Optional one-way git mirror**: every exportable lifecycle event becomes a commit in a private repository per scope, written with go-git (no `git` binary) ([runbook](docs/operations/mirror.md)).
 - **Operations**: one distroless container image, a Helm chart with NetworkPolicies and a migration hook, Prometheus metrics, OpenTelemetry traces, example alerts, pgBackRest backups with a measured restore drill, load tests and runbooks ([`docs/operations/`](docs/operations/)).
 - **Security layers**: separate database roles, PostgreSQL row-level security forced on every tenant table, role checks per tool, revision-bound review (approval and promotion happen only in the browser, never over MCP), an append-only audit log, secret scanning, request limits and untrusted-data framing ([threat model](docs/security/threat-model.md)).
+
+## See it in action
+
+An agent proposes a payment retry convention through MCP. A developer can search for it alongside inherited team guidance, inspect its revisions, and approve the exact text in the portal.
+
+![Portal search showing an unverified payment retry proposal alongside approved guidance inherited from the platform team](docs/assets/screenshots/search.png)
+
+This screenshot comes from a local Chromium test drive with synthetic data. The run uses full-text search; the portal labels the retrieval mode and each result's origin and trust. Follow the [screenshot walkthrough](docs/test-drive.md) from sign-in through approval, revision history, and the audit log, or read the [portal guide](docs/portal.md).
 
 ## Quickstart
 
@@ -248,6 +256,7 @@ make test
 | --- | --- |
 | `make test-unit`, `make test-security` | unit tests only (no database); adversarial security suite only |
 | `make test-e2e` | portal browser tests in Chromium (first: `cd e2e && npm ci && npx playwright install chromium`) |
+| `make docs-screenshots` | repeat the synthetic test drive and refresh documentation screenshots (same browser dependencies) |
 | `make lint` | `go vet` and golangci-lint |
 | `make generate`, `make check-generate` | regenerate sqlc code after changing `internal/postgres/queries/`; fail if it is stale |
 | `make run`, `make worker`, `make dev-roles` | run the server or worker locally; create local login roles |
@@ -276,7 +285,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules CI and reviewers enforce.
 
 | Area | Where |
 | --- | --- |
-| Using Team Memory | [portal guide](docs/portal.md), [Claude Code](docs/clients/claude-code.md), [Codex](docs/clients/codex.md), [agent policies](docs/agent-policy/) |
+| Using Team Memory | [screenshot walkthrough](docs/test-drive.md), [portal guide](docs/portal.md), [Claude Code](docs/clients/claude-code.md), [Codex](docs/clients/codex.md), [agent policies](docs/agent-policy/) |
 | Running it | [local Docker](docs/operations/local-docker.md), [`docs/operations/`](docs/operations/), [Helm chart](deploy/helm/team-memory/README.md) |
 | Security | [threat model](docs/security/threat-model.md), [limits](docs/security/limits.md), [SECURITY.md](SECURITY.md) |
 | Design decisions | [`docs/decisions/`](docs/decisions/) (RLS, scopes, retrieval, identity, portal, mirror, …) |

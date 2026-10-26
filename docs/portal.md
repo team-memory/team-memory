@@ -2,6 +2,8 @@
 
 The portal is a web page served by `team-memory serve` at `/portal` (see `TEAM_MEMORY_PORTAL_BASE_PATH`). It needs no extra install.
 
+For a complete example, follow the [test drive with screenshots](test-drive.md). The screenshots below use synthetic organization, team, and project data from that run.
+
 ## Signing in
 
 - **Solo setup (no SSO configured).** Run `team-memory init`, which prints a personal access token. Open `/portal`, paste the token under *Personal access token*. The token is sent once and is not kept in the browser.
@@ -20,6 +22,10 @@ Sessions end after 30 idle minutes or 12 hours. *Sign out* ends them on the serv
 - **Search** uses the same hybrid retrieval as MCP and shows the same provenance.
 - A **memory page** shows content, rationale, source, author, approver, the current revision, every revision with a line diff, lifecycle events and the supersession chain.
 
+In this example, the `payments` project inherits two approved memories from `acme` and `acme/platform`. The portal groups them by origin and labels them read-only here.
+
+![Payments project showing approved organization and platform guidance on the Inherited from ancestors tab](assets/screenshots/inherited-memories.png)
+
 ## Reviewing (maintainers)
 
 Open *Review queue* on a scope (or a memory from it). The page names the exact revision you are reviewing, shows a secret-scan result and similar memories in other scopes.
@@ -30,4 +36,14 @@ Open *Review queue* on a scope (or a memory from it). The page names the exact r
 - **Promote** moves an approved memory up one level. You consent to share its snapshot with the parent scope's reviewers. If you are also a maintainer there, it completes at once; otherwise it becomes a request in the parent's queue, where a maintainer there accepts or rejects it. Destination reviewers see only the snapshot. Accepted promotions supersede the original, so there is no duplicate.
 - **Mark as overriding** (writers) appears next to a similar inherited memory. It creates a new revision; nothing is hidden until a maintainer approves that revision.
 
+The review panel names the revision being approved and shows the secret-scan result. In this test drive, the maintainer approves revision 2 and leaves the optional promotion unchecked, keeping the convention in the payments project.
+
+![Maintainer review panel for revision 2 with a review note, unchecked promotion controls, and the Approve revision 2 button](assets/screenshots/review.png)
+
 Changing roles stays in the CLI (`team-memory member …`); *Members* is a read-only list.
+
+## Tracing changes (maintainers)
+
+Open **Audit log** from a scope page to filter events by actor ID, client name or OAuth ID, action, outcome, target, and dates. Filters match exact values. The log shows who acted, how, and when; client names describe software and do not establish identity. Expand an event for audit details and correlation IDs. Readers cannot access this page.
+
+See the walkthrough's [approval history](test-drive.md#6-check-approval-and-revision-history) and [filtered audit log](test-drive.md#7-check-the-audit-trail) for examples.

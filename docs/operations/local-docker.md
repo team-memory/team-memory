@@ -54,6 +54,8 @@ Ask: “Use team_memory_local to create a fact titled Docker connection test in 
 - MCP: <http://127.0.0.1:8080/mcp> (bearer authentication required).
 - Health/readiness: <http://127.0.0.1:9090/healthz> and <http://127.0.0.1:9090/readyz>.
 
+For a visual tour of sign-in, scopes, search, and maintainer review, see the [screenshot test drive](../test-drive.md). Its `acme/platform/payments` examples are synthetic test fixtures; your fresh `local/default` scope starts empty.
+
 ```bash
 curl --fail http://127.0.0.1:9090/readyz
 docker compose -f compose.local.yaml ps
@@ -98,6 +100,8 @@ make test-e2e
 On Linux, Chromium may also need system dependencies (`npx playwright install --with-deps chromium` from `e2e/`). The browser test starts and seeds its own temporary server and verifies approval through MCP and the audit log; it does not use your local portal data.
 
 `make test` skips opt-in Ollama retrieval evaluations, vector/mirror benchmarks, remote Git tests and the browser suite. Run the browser target separately as above. See the Makefile targets `eval`, `bench-vector` and `test-mirror-remote` for the extra services/configuration those checks require. Passing these suites does not complete the interactive cross-client release gate.
+
+To regenerate the screenshots after installing the browser dependencies, run `make docs-screenshots`. It starts a temporary server and a fresh test database on the database-only stack, drives the reader and maintainer workflows, and overwrites the PNGs in `docs/assets/screenshots/`. It does not use the `compose.local.yaml` app or your portal data. The [capture notes](../test-drive.md#refreshing-the-screenshots) describe the checks and cleanup.
 
 After testing, stop both project stacks while retaining their volumes:
 

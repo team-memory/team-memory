@@ -4,7 +4,7 @@ TEST_DATABASE_URL ?= postgres://teammemory:teammemory-dev@127.0.0.1:55432/postgr
 SQLC_VERSION := v1.31.1
 export DATABASE_URL TEST_DATABASE_URL
 
-.PHONY: image helm-lint check-alerts secret-scan dev-git-up test-mirror-remote k3d-up k3d-down rollback-drill backup-drill loadtest test-e2e help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
+.PHONY: docs-screenshots image helm-lint check-alerts secret-scan dev-git-up test-mirror-remote k3d-up k3d-down rollback-drill backup-drill loadtest test-e2e help db-up db-down dev-roles migrate run worker build test test-security test-unit eval bench-vector generate check-generate lint dev-idp-up dev-idp-down
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -36,6 +36,9 @@ test-security: db-up ## Adversarial security suite only
 
 test-e2e: db-up ## Portal browser tests in Chromium (first: cd e2e && npm ci && npx playwright install chromium)
 	TEAM_MEMORY_E2E=1 go test -count=1 -v -run TestPortalBrowserEndToEnd ./integration/security/
+
+docs-screenshots: db-up ## Capture the synthetic portal walkthrough (same dependencies as test-e2e)
+	TEAM_MEMORY_DOC_SCREENSHOTS=1 go test -count=1 -v -run '^TestPortalDocumentationScreenshots$$' ./integration/security/
 
 test-unit: ## Unit tests only (no database)
 	go test ./internal/... ./cmd/...
