@@ -5,6 +5,8 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 ## [Unreleased]
 
 ### Added
+- Experience loop roadmap (`docs/roadmap/experience-loop/`): a proposal and staged build prompts for session capture, curator proposals, skills, CLI and wiki views, and standards-api integration, all behind the existing scope, RLS and approval guarantees. Nothing is implemented yet.
+- Stash added to the landscape review.
 - Screenshot walkthrough of a synthetic MCP and portal test drive, illustrated README and portal guide, and `make docs-screenshots` to regenerate captures against a disposable test database.
 - Per-revision MCP client attribution, OAuth application and PAT audit references, and a maintainer audit page with actor, client, action, outcome, target, and date filters.
 - Branded public homepage with agent setup instructions for Codex and Claude Code, deployment-aware authentication guidance, and portal links.
