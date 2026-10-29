@@ -23,7 +23,15 @@ Overlap: PR review is a strong, familiar approval mechanism. The proposal defers
 | [OpenMemory (Mem0)](https://mem0.ai/blog/introducing-openmemory-mcp) | Local store with dashboard; hosted version available | Local-first, one user's tools | Not described | Not described | See vendor |
 | [mcp-vector-memory](https://github.com/BBerthod/mcp-vector-memory) | Qdrant + Ollama embeddings | Shared server for a team's code and docs | Not described | Not described in the summary reviewed | MIT |
 
-Sources for the rows without a fetched README (OpenMemory, mcp-vector-memory) are search-result summaries and vendor posts, so they are weaker evidence.
+| [Stash](https://github.com/Fergana-Labs/stash) | PostgreSQL + S3; sessions, wiki pages, files, tables, skill folders | Per-account by default; domain-verified org workspaces; per-person folder shares; public skill publishing | No approval step; a scheduled curator agent rewrites a Memory wiki from recorded sessions | Stash accounts and API keys; OAuth to GitHub, Google Drive and Notion sources | MIT |
+
+Sources for the rows without a fetched README (OpenMemory, mcp-vector-memory) are search-result summaries and vendor posts, so they are weaker evidence. The Stash row was added on 2026-10-27 from its README and `ARCHITECTURE.md` in a shallow clone; it was not run.
+
+### Stash
+
+Stash is the broadest project reviewed and starts from a different premise: knowledge is captured automatically rather than written deliberately. Hooks record coding-agent sessions, a scheduled curator turns new activity into linked wiki pages, and related instructions are packaged as `SKILL.md` skills that auto-update in agents. It is reachable through MCP, a CLI, a Python SDK, REST, and a virtual filesystem, and it includes an experimental reward-model and GEPA prompt-optimization pipeline. It is primarily a hosted service (FastAPI, Next.js, Celery) with self-hosting from source.
+
+Overlap with Team Memory is persistent, cross-session knowledge for coding agents over MCP. The differences are in governance: Stash scopes content to an account or an email-domain workspace and enforces privacy in each router, while Team Memory uses a scope hierarchy with forced RLS, and Stash has no step where a human approves agent-written knowledge before it becomes guidance. Stash's automatic capture, curation, and skill distribution are the main capabilities Team Memory lacks.
 
 ## Overlap
 
