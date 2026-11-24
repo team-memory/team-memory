@@ -63,6 +63,9 @@ type Options struct {
 	// Limiter rate-limits authenticated requests per principal. Nil means
 	// no limit.
 	Limiter *ratelimit.Limiter
+	// ScopeCreateLimiter limits memory_scope_create per principal, on top
+	// of Limiter: scopes cannot be deleted. Nil means no limit.
+	ScopeCreateLimiter *ratelimit.Limiter
 	// OnAuthFailure is called for every rejected credential (audit). kind
 	// is "pat" or "jwt"; reason never contains the credential. Requests
 	// without any credential are only logged: clients probe without one.
@@ -174,7 +177,7 @@ func credentialKind(token string) string {
 func NewServer(svc *memory.Service, srch *search.Service, opts Options) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "team-memory", Title: "Team Memory", Version: Version},
 		&mcp.ServerOptions{Instructions: instructions, Logger: opts.Logger})
-	t := &tools{svc: svc, search: srch, defaultScope: opts.DefaultScope}
+	t := &tools{svc: svc, search: srch, defaultScope: opts.DefaultScope, scopeCreates: opts.ScopeCreateLimiter}
 	t.register(s)
 	s.AddReceivingMiddleware(observeTools(opts.Observer))
 	registerResources(s, svc)
@@ -197,7 +200,7 @@ var errUnauthenticated = errors.New("unauthenticated")
 // knownTools bounds the tool label: an unknown name from a client is
 // recorded as "unknown".
 var knownTools = map[string]bool{"memory_search": true, "memory_get": true, "memory_create": true, "memory_update": true,
-	"memory_supersede": true, "memory_history": true, "memory_approve": true, "memory_recent": true}
+	"memory_supersede": true, "memory_history": true, "memory_approve": true, "memory_recent": true, "memory_scope_create": true}
 
 // observeTools wraps tools/call in a span and reports it to the observer.
 func observeTools(o ToolObserver) mcp.Middleware {

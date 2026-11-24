@@ -24,6 +24,9 @@ All limits are enforced by the server. Field limits are enforced in Go and again
 | change_note, supersede reason, archive reason | 1,000 characters |
 | review note, promotion rationale | 2,000 characters |
 | override links per revision | 10 |
+| scope slug | 1–63 characters: lowercase letters, digits and hyphens, starting with a letter or digit |
+| scope level label | 1–40 characters, and one of the organization's allowed levels |
+| scope name | 1–200 characters |
 | search query | 500 characters |
 | results per call | default 10, maximum 50 |
 
@@ -38,6 +41,7 @@ Limits are per process. With N replicas, the effective limit is up to N times hi
 | What | Key | Default | Setting |
 | --- | --- | --- | --- |
 | MCP requests | principal | 20/s, burst 60 | `TEAM_MEMORY_RATE_LIMIT`, `TEAM_MEMORY_RATE_BURST` (negative rate disables) |
+| `memory_scope_create` calls | principal | 6/min, burst 10 | fixed, on top of the MCP request limit; disabled when that limit is disabled. Over the limit the tool returns `rate_limited`. |
 | `/oauth/register`, `/oauth/authorize`, `/oauth/login`, `/oauth/callback/*`, `/oauth/token` | client address | 60/min | `oauth.Options.RatePerMinute` |
 | Audit rows for rejected credentials | client address | 1/s, burst 20 | fixed; excess failures are only logged |
 | DCR clients, pending authorizations, pending upstream logins | global | 10,000 each | fixed |

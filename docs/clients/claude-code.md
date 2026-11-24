@@ -29,6 +29,7 @@ Ask Claude Code to call `memory_search` for a known topic. Results start with an
 - **401 / not connected:** token expired or revoked, or SSO not ready. Check `https://memory.example.com/readyz`; it reports not ready when SSO secrets are missing.
 - **`permission_denied`:** the principal has no role on the scope.
 - **Self-signed certificate:** set `NODE_EXTRA_CA_CERTS` to your CA file.
+- **`memory_scope_create` returns `permission_denied`:** it needs a maintainer grant that cascades to the parent scope's descendants; a maintainer grant on the parent alone is not enough.
 - **`memory_approve` does not approve:** by design it only requests review; a maintainer approves in the portal.
 
 Add the policy snippet in `docs/agent-policy/CLAUDE.md` to your repository's `CLAUDE.md`.

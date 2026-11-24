@@ -5,6 +5,7 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 ## [Unreleased]
 
 ### Added
+- MCP tool `memory_scope_create`: a principal with a cascading maintainer grant on a scope can create a child scope under it, so an agent can give a new project or channel its own scope without the operator CLI. An existing scope is returned with `created: false`, and the tool is rate-limited per principal ([decision](docs/decisions/mcp-scope-creation.md)).
 - Sequenced search performance implementation prompts (`prompts/08`–`11`) for provider reliability and measurement, query embedding caching, overlapping keyword retrieval, and a query-provider circuit breaker. Enhancements are planned, not implemented.
 - Experience loop roadmap (`docs/roadmap/experience-loop/`): a proposal and staged build prompts for session capture, curator proposals, skills, CLI and wiki views, and standards-api integration, all behind the existing scope, RLS and approval guarantees. Nothing is implemented yet.
 - Stash added to the landscape review.

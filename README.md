@@ -14,7 +14,7 @@ This repository holds both the service code and its planning material ([`proposa
 - **Hierarchical scopes** (organization → team → project; levels and depth are configurable). Memories are inherited downward only, and each result says where it came from (`origin_scope`, `inherited`).
 - **Hybrid search**: PostgreSQL full-text plus pgvector similarity, fused with Reciprocal Rank Fusion and filtered to the caller's scope chain before ranking. Without a reachable embedding provider, search falls back to full-text and says so in the response.
 - **Durable embedding jobs**: a transactional outbox in PostgreSQL and a worker with retries, backoff and dead-lettering. Embeddings come from a local [Ollama](https://ollama.com).
-- **MCP over Streamable HTTP** with eight tools and four resource views. Serves protocol 2026-07-28 and older clients that use the `initialize` handshake.
+- **MCP over Streamable HTTP** with nine tools and four resource views. Serves protocol 2026-07-28 and older clients that use the `initialize` handshake.
 - **Authentication**: personal access tokens (shown once, stored hashed, expiring, revocable), and optional SSO where Team Memory is the OAuth 2.1 authorization server for MCP clients and delegates sign-in to any OpenID Connect provider. There is no unauthenticated mode.
 - **Web portal** at `/portal` for browsing, searching, reviewing, approving and promoting memories ([user guide](docs/portal.md)).
 - **Optional one-way git mirror**: every exportable lifecycle event becomes a commit in a private repository per scope, written with go-git (no `git` binary) ([runbook](docs/operations/mirror.md)).
@@ -225,10 +225,13 @@ Roles are `reader`, `writer` and `maintainer`. A grant applies to that scope onl
 | `memory_search`, `memory_get`, `memory_history`, `memory_recent` | reader |
 | `memory_create`, `memory_update` | writer |
 | `memory_supersede`, `memory_approve` | maintainer |
+| `memory_scope_create` | maintainer on the parent, through a cascading grant |
 
 `memory_search` takes `query`, `scope` (alias `project`), `types`, `limit`, `include_superseded` and `include_overridden`. Each result carries `origin_scope`, `inherited`, `precedence` (scope depth), `trust`, `approved_by`/`approved_at`, `revision`, `source_uri`, `updated_at`, a 0–1 rank-based `score` (not a calibrated probability), and the `retrievers` that matched it. `meta` reports whether semantic matching ran ([retrieval scoring](docs/decisions/retrieval-scoring.md)).
 
 `memory_approve` only *requests* review of an exact revision (idempotent); it never changes trust. Approval, rejection and promotion happen only through explicit review in the portal.
+
+`memory_scope_create` takes `parent`, `level`, `slug` and an optional `name`, and returns the scope with `created`. It needs a maintainer grant that cascades to the parent's descendants (`member add --role maintainer --cascade` on the parent or an ancestor). Calling it for a scope that already exists at that level returns that scope with `created: false`. Scopes cannot be deleted or moved.
 
 Resources: `memory://scopes/{scope-path}/{overview|decisions|conventions|recent}`, with a `memory://projects/...` alias.
 

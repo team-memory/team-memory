@@ -15,7 +15,7 @@ import (
 	"github.com/team-memory/team-memory/internal/search"
 )
 
-// probe attempts every read path of all eight tools and all four resources
+// probe attempts every read path of all nine tools and all four resources
 // against a target scope and memory, and reports which ones leaked.
 func probe(t *testing.T, cs *mcp.ClientSession, scope string, target memory.Memory) []string {
 	t.Helper()
@@ -48,6 +48,8 @@ func probe(t *testing.T, cs *mcp.ClientSession, scope string, target memory.Memo
 	check("memory_supersede", out, isErr)
 	out, isErr = call(t, cs, "memory_approve", map[string]any{"id": id, "revision": 1})
 	check("memory_approve", out, isErr)
+	out, isErr = call(t, cs, "memory_scope_create", map[string]any{"parent": scope, "level": "project", "slug": "probe"})
+	check("memory_scope_create", out, isErr)
 	for _, view := range []string{"overview", "decisions", "conventions", "recent"} {
 		uri := "memory://scopes/" + scope + "/" + view
 		res, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
@@ -242,6 +244,155 @@ func TestNonCascadingGrantsAndAdministration(t *testing.T) {
 	// The owner's root grant cannot be removed or downgraded through the API.
 	if err := w.svc.RevokeMember(ctx, w.owner, "acme", w.owner.ID); !is(err, memory.ErrForbidden) {
 		t.Fatalf("owner root grant revoked through the API: %v", err)
+	}
+}
+
+// TestScopeCreationThroughMCP: memory_scope_create adds a scope only under
+// a scope the caller holds a cascading maintainer grant on. No other
+// position creates one, a parent the caller cannot see answers as a missing
+// one, and repeated or concurrent calls end with one scope.
+func TestScopeCreationThroughMCP(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	url := w.serve()
+	scopes := func() int {
+		t.Helper()
+		var n int
+		if err := w.db.Admin.QueryRow(ctx, "SELECT count(*) FROM scopes").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	bot := w.principal("Bot", "service")
+	w.grant("acme/data", bot, memory.RoleMaintainer, true)
+	before := scopes()
+	refusals := []struct {
+		who    memory.Principal
+		parent string
+		code   string
+		why    string
+	}{
+		{w.nobody, "acme", "not_found", "principal with no grants"},
+		{w.globexOwner, "acme/platform", "not_found", "another organization's owner"},
+		{w.globexOwner, w.scopes["acme/platform"].ID.String(), "not_found", "another organization's owner, by id"},
+		{w.dataCascade, "acme/platform", "not_found", "cascading writer under a sibling subtree"},
+		{bot, "acme/platform", "not_found", "cascading maintainer under a sibling subtree"},
+		{bot, "acme", "permission_denied", "cascading maintainer under its own parent"},
+		{w.dataCascade, "acme/data", "permission_denied", "cascading writer"},
+		{w.teamMaintainer, "acme/platform", "permission_denied", "maintainer without a cascading grant"},
+		{w.agent, "acme/platform/payments", "permission_denied", "service maintainer without a cascading grant"},
+		{w.paymentsMaint, "acme/platform", "permission_denied", "maintainer of a child, on the inherited parent"},
+		{w.owner, "acme/nowhere", "not_found", "missing parent"},
+		{w.owner, "", "invalid_argument", "no parent"},
+	}
+	for _, c := range refusals {
+		cs := connect(t, url, w.token(c.who))
+		out, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": c.parent, "level": "project", "slug": "sneaky"})
+		if !isErr || errCode(out) != c.code {
+			t.Errorf("%s: got %v, want %s", c.why, out, c.code)
+		}
+	}
+	owner := connect(t, url, w.token(w.owner))
+	for why, args := range map[string]map[string]any{
+		"level the organization does not allow": {"parent": "acme/platform", "level": "galaxy", "slug": "sneaky"},
+		"malformed level":                       {"parent": "acme/platform", "level": "Project", "slug": "sneaky"},
+		"slug with a path separator":            {"parent": "acme/platform", "level": "project", "slug": "a/b"},
+		"slug in upper case":                    {"parent": "acme/platform", "level": "project", "slug": "Sneaky"},
+		"name too long":                         {"parent": "acme/platform", "level": "project", "slug": "sneaky", "name": strings.Repeat("n", 201)},
+	} {
+		if out, isErr := call(t, owner, "memory_scope_create", args); !isErr || errCode(out) != "invalid_argument" {
+			t.Errorf("%s: %v", why, out)
+		}
+	}
+	if n := scopes(); n != before {
+		t.Fatalf("refused calls created %d scopes", n-before)
+	}
+
+	// A service principal with a cascading maintainer grant creates under
+	// its subtree and can use the scope at once; outsiders cannot see it.
+	cs := connect(t, url, w.token(bot))
+	out, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": "acme/data", "level": "project", "slug": "lake", "name": "Lake"})
+	sc, _ := out["scope"].(map[string]any)
+	if isErr || out["created"] != true || sc["path"] != "acme/data/lake" || sc["level"] != "project" || sc["name"] != "Lake" {
+		t.Fatalf("create: %v", out)
+	}
+	if out, isErr := call(t, cs, "memory_create", map[string]any{"scope": "acme/data/lake", "kind": "fact", "title": "t", "content": "c"}); isErr {
+		t.Fatalf("creator cannot write to the scope it created: %v", out)
+	}
+	outsider := connect(t, url, w.token(w.billingWriter))
+	if out, isErr := call(t, outsider, "memory_search", map[string]any{"scope": "acme/data/lake", "query": "t"}); !isErr || errCode(out) != "not_found" {
+		t.Fatalf("outsider reached the new scope: %v", out)
+	}
+
+	// Repeating the call returns the same scope and creates nothing.
+	again, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": "acme/data", "level": "project", "slug": "lake", "name": "Renamed"})
+	sc2, _ := again["scope"].(map[string]any)
+	if isErr || again["created"] != false || sc2["id"] != sc["id"] || sc2["name"] != "Lake" {
+		t.Fatalf("repeat: %v", again)
+	}
+	if out, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": "acme/data", "level": "team", "slug": "lake"}); !isErr || errCode(out) != "invalid_argument" {
+		t.Fatalf("existing scope at another level: %v", out)
+	}
+	// An existing scope is not returned to a caller who may not create it.
+	if out, isErr := call(t, connect(t, url, w.token(w.dataCascade)), "memory_scope_create", map[string]any{"parent": "acme/data", "level": "project", "slug": "lake"}); !isErr || errCode(out) != "permission_denied" {
+		t.Fatalf("cascading writer got the existing scope: %v", out)
+	}
+	var audited int
+	if err := w.db.Admin.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE action = 'scope.create' AND outcome = 'success' AND target_id = $1", sc["id"]).Scan(&audited); err != nil || audited != 1 {
+		t.Fatalf("scope.create audit rows for one scope: %d %v", audited, err)
+	}
+
+	// Concurrent calls for one new scope all succeed and exactly one creates it.
+	const racers = 8
+	var wg sync.WaitGroup
+	results := make([]string, racers)
+	for i := range racers {
+		rc := connect(t, url, w.token(bot))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := rc.CallTool(ctx, &mcp.CallToolParams{Name: "memory_scope_create",
+				Arguments: map[string]any{"parent": "acme/data", "level": "project", "slug": "raced"}})
+			switch {
+			case err != nil:
+				results[i] = err.Error()
+			case res.IsError:
+				results[i] = res.Content[0].(*mcp.TextContent).Text
+			case strings.Contains(res.Content[0].(*mcp.TextContent).Text, `"created": true`):
+				results[i] = "created"
+			default:
+				results[i] = "existing"
+			}
+		}()
+	}
+	wg.Wait()
+	created := 0
+	for _, r := range results {
+		switch r {
+		case "created":
+			created++
+		case "existing":
+		default:
+			t.Errorf("concurrent create failed: %s", r)
+		}
+	}
+	var rows int
+	if err := w.db.Admin.QueryRow(ctx, "SELECT count(*) FROM scopes WHERE path = 'acme/data/raced'").Scan(&rows); err != nil || rows != 1 || created != 1 {
+		t.Fatalf("concurrent creates: %d rows, %d reported created (%v) %v", rows, created, results, err)
+	}
+
+	// The tree's depth limit applies (the default maximum depth is 5).
+	parent, code := "acme/data/lake", ""
+	for range 5 {
+		out, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": parent, "level": "project", "slug": "deeper"})
+		if isErr {
+			code = errCode(out)
+			break
+		}
+		parent += "/deeper"
+	}
+	if code != "invalid_argument" {
+		t.Fatalf("depth limit: stopped at %s with %q", parent, code)
 	}
 }
 

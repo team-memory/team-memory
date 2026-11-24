@@ -36,6 +36,12 @@ func TestAuditTrail(t *testing.T) {
 	_, _ = w.svc.Approve(ctx, w.paymentsWriter, memory.ReviewInput{ID: m.ID, Revision: 2})
 	_, _ = w.svc.Create(ctx, w.paymentsReader, memory.CreateInput{Scope: "acme/platform/payments", Kind: "fact", Title: "t", Content: "c"})
 	_, _ = w.svc.Get(ctx, w.billingWriter, m.ID, "")
+	// Scope creation: allowed for the owner, denied for a maintainer whose
+	// grant does not cascade.
+	if _, created, err := w.svc.EnsureScopeAs(ctx, w.owner, "acme/platform", "project", "ledger", ""); err != nil || !created {
+		t.Fatalf("owner create scope: %v %v", created, err)
+	}
+	_, _, _ = w.svc.EnsureScopeAs(ctx, w.teamMaintainer, "acme/platform", "project", "sneaky", "")
 
 	rows, err := w.db.Admin.Query(context.Background(),
 		"SELECT action, outcome, coalesce(actor_id::text, ''), coalesce(request_id, ''), details::text FROM audit_events WHERE request_id = 'req-audit-1'")
@@ -58,7 +64,8 @@ func TestAuditTrail(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"memory.create/success", "memory.update/success", "memory.review_request/success",
-		"memory.approve/success", "memory.supersede/success", "memory.approve/denied", "memory.create/denied", "memory.get/denied"} {
+		"memory.approve/success", "memory.supersede/success", "memory.approve/denied", "memory.create/denied", "memory.get/denied",
+		"scope.create/success", "scope.create/denied"} {
 		if !seen[want] {
 			t.Errorf("no audit event %s (saw %v)", want, seen)
 		}

@@ -31,6 +31,14 @@ import (
 	"github.com/team-memory/team-memory/internal/telemetry"
 )
 
+// Scope creation through MCP is limited per principal well below the
+// request limit, because a scope can never be deleted. Disabling the
+// request limit disables this one too.
+const (
+	scopeCreatesPerSecond = 0.1
+	scopeCreateBurst      = 10
+)
+
 // Options configures the server.
 type Options struct {
 	// Pool must connect as a member of team_memory_app (see
@@ -95,6 +103,9 @@ func New(opts Options) *Server {
 	}
 	mcpOpts := mcp.Options{DefaultScope: opts.DefaultScope, Logger: opts.Logger, MaxBodyBytes: opts.MaxBodyBytes,
 		Limiter: ratelimit.New(rate, burst), OnAuthFailure: failures.Record}
+	if rate > 0 {
+		mcpOpts.ScopeCreateLimiter = ratelimit.New(scopeCreatesPerSecond, scopeCreateBurst)
+	}
 	if opts.Metrics != nil {
 		mcpOpts.Observer = opts.Metrics
 	}

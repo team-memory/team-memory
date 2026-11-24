@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,36 @@ func TestRequestLimits(t *testing.T) {
 	}
 	if code, _ := post(t, srv.URL, "Bearer "+w.token(w.billingWriter), listTools); code != http.StatusOK {
 		t.Fatalf("another principal throttled too: %d", code)
+	}
+}
+
+// TestScopeCreationIsRateLimited: a principal that may create scopes is
+// stopped after a burst, without affecting another principal. Scopes cannot
+// be deleted, so this bounds what a runaway agent leaves behind.
+func TestScopeCreationIsRateLimited(t *testing.T) {
+	w := newWorld(t)
+	srv := httptest.NewServer(server.New(server.Options{Pool: w.db.App, Search: w.srch}))
+	defer srv.Close()
+	cs := connect(t, srv.URL, w.token(w.owner))
+	created, limited := 0, false
+	for i := range 15 {
+		out, isErr := call(t, cs, "memory_scope_create", map[string]any{"parent": "acme/data", "level": "project", "slug": "burst-" + strconv.Itoa(i)})
+		if isErr {
+			limited = errCode(out) == "rate_limited"
+			break
+		}
+		created++
+	}
+	if !limited || created != 10 {
+		t.Fatalf("created %d scopes before the limit (limited=%v), want 10", created, limited)
+	}
+	var n int
+	if err := w.db.Admin.QueryRow(context.Background(), "SELECT count(*) FROM scopes WHERE path LIKE 'acme/data/burst-%'").Scan(&n); err != nil || n != 10 {
+		t.Fatalf("scopes created: %d %v", n, err)
+	}
+	other := connect(t, srv.URL, w.token(w.globexOwner))
+	if out, isErr := call(t, other, "memory_scope_create", map[string]any{"parent": "globex", "level": "project", "slug": "mine"}); isErr {
+		t.Fatalf("another principal limited too: %v", out)
 	}
 }
 

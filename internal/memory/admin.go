@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/team-memory/team-memory/internal/postgres"
 	"github.com/team-memory/team-memory/internal/postgres/db"
@@ -90,6 +91,82 @@ func (s *Service) CreateScopeAs(ctx context.Context, p Principal, parentRef, lev
 		return mapDBError(err)
 	})
 	return out, err
+}
+
+// EnsureScopeAs returns the child scope slug of parentRef, creating it when
+// it does not exist; created reports which. The rule is that of
+// CreateScopeAs, and a caller that passes it sees every child of the parent,
+// so returning an existing scope reveals nothing. A scope that exists at
+// another level is a validation error.
+func (s *Service) EnsureScopeAs(ctx context.Context, p Principal, parentRef, level, slug, name string) (Scope, bool, error) {
+	if err := validSlug(slug); err != nil {
+		return Scope{}, false, err
+	}
+	if err := validLevel(level); err != nil {
+		return Scope{}, false, err
+	}
+	if name == "" {
+		name = slug
+	}
+	if err := checkText("name", name, 1, 200); err != nil {
+		return Scope{}, false, err
+	}
+	var (
+		out     Scope
+		created bool
+	)
+	id := uuid.New()
+	ensure := func() error {
+		return postgres.WithActorTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
+			parent, err := resolveScope(ctx, tx.Q, parentRef)
+			if err != nil {
+				return err
+			}
+			if err := requireCascadingMaintainer(ctx, tx.Q, p, parent.ID); err != nil {
+				return err
+			}
+			existing, err := tx.Q.GetScopeByPath(ctx, parent.Path+"/"+slug)
+			if err == nil {
+				if existing.Level != level {
+					return invalidf("scope %s already exists at level %s", existing.Path, existing.Level)
+				}
+				out, created = toScope(existing), false
+				return nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			createdBy := p.ID
+			if err := tx.Q.InsertChildScope(ctx, db.InsertChildScopeParams{
+				ID: id, Level: level, Slug: slug, Name: name, CreatedBy: &createdBy, ParentID: parent.ID,
+			}); err != nil {
+				return err
+			}
+			created = true
+			return audit(ctx, tx, parent.OrgID, p.ID, "scope.create", "scope", id.String(), &id,
+				map[string]any{"parent": parent.ID, "level": level, "slug": slug})
+		})
+	}
+	err := ensure()
+	// A concurrent call created the same scope first: its transaction has
+	// committed, so a second attempt finds the scope.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		err = ensure()
+	}
+	if err = mapDBError(err); err != nil {
+		s.auditDenial(ctx, p, "scope.create", "scope", parentRef, err)
+		return Scope{}, false, err
+	}
+	if !created {
+		return out, false, nil
+	}
+	err = postgres.WithActorReadTx(ctx, s.pool, p.actor(), func(tx postgres.Tx) error {
+		sc, err := tx.Q.GetScopeByID(ctx, id)
+		out = toScope(sc)
+		return mapDBError(err)
+	})
+	return out, true, err
 }
 
 // GrantMember grants or changes a role on a scope. Requires maintainer on

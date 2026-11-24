@@ -105,7 +105,7 @@ func TestMCPProtocol(t *testing.T) {
 			for _, tl := range tools.Tools {
 				names = append(names, tl.Name)
 			}
-			want := "memory_approve,memory_create,memory_get,memory_history,memory_recent,memory_search,memory_supersede,memory_update"
+			want := "memory_approve,memory_create,memory_get,memory_history,memory_recent,memory_scope_create,memory_search,memory_supersede,memory_update"
 			if got := strings.Join(sortStrings(names), ","); got != want {
 				t.Fatalf("tools: %s", got)
 			}

@@ -24,6 +24,7 @@ This repository's shared knowledge lives in Team Memory (MCP server `team-memory
 - Record durable decisions, conventions, facts and lessons, not transcripts or step-by-step logs. Put the reason in `rationale`, and link the issue, PR or doc in `source_uri`.
 - **Never store secrets**: no tokens, passwords, keys, connection strings with credentials, or customer data. The server rejects common credential formats, but not all of them.
 - Do not try to make your own memories authoritative. `memory_approve` only requests human review; approval happens in the portal, by a person.
+- Do not create scopes on your own initiative. Call `memory_scope_create` only when your deployment's instructions say which scope to create and when; scopes cannot be deleted.
 - When guidance changes, update the memory (`memory_update` with the revision you read) instead of creating a contradicting one. If you think a memory is wrong, say so to the user rather than silently superseding it.
 
 ---

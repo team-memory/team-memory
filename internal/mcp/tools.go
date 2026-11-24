@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/team-memory/team-memory/internal/memory"
+	"github.com/team-memory/team-memory/internal/ratelimit"
 	"github.com/team-memory/team-memory/internal/search"
 )
 
@@ -14,6 +15,8 @@ type tools struct {
 	svc          *memory.Service
 	search       *search.Service
 	defaultScope string
+	// scopeCreates limits memory_scope_create per principal; nil means no limit.
+	scopeCreates *ratelimit.Limiter
 }
 
 // scopeRef carries the scope selector shared by most tools. "project" is an
@@ -100,6 +103,13 @@ type recentIn struct {
 	Limit int      `json:"limit,omitempty" jsonschema:"maximum results (default 10, max 50)"`
 }
 
+type scopeCreateIn struct {
+	Parent string `json:"parent" jsonschema:"path or id of the scope the new scope goes under"`
+	Level  string `json:"level" jsonschema:"level label of the new scope; must be one the organization allows (e.g. team, project)"`
+	Slug   string `json:"slug" jsonschema:"last segment of the new scope's path: lowercase letters, digits and hyphens, max 63 characters"`
+	Name   string `json:"name,omitempty" jsonschema:"display name, max 200 characters; defaults to the slug"`
+}
+
 func (t *tools) register(s *mcp.Server) {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)}
 	write := &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
@@ -133,6 +143,10 @@ func (t *tools) register(s *mcp.Server) {
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_recent", Annotations: readOnly,
 		Description: "List recently changed active memories in a scope and the scopes it inherits from."},
 		t.recent)
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_scope_create", Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
+		Description: "Create a child scope under a scope, so memories can be kept apart from the parent's. Requires a maintainer role that cascades to the parent's descendants. " +
+			"If the scope already exists at that level it is returned with created=false. Scopes cannot be deleted, so create one only when your deployment's instructions call for it."},
+		t.scopeCreate)
 }
 
 func (t *tools) searchTool(ctx context.Context, req *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, any, error) {
@@ -295,4 +309,19 @@ func (t *tools) recent(ctx context.Context, req *mcp.CallToolRequest, in recentI
 		return errorResult(err), nil, nil
 	}
 	return memoryResult(map[string]any{"scope": scope, "results": res}), nil, nil
+}
+
+func (t *tools) scopeCreate(ctx context.Context, req *mcp.CallToolRequest, in scopeCreateIn) (*mcp.CallToolResult, any, error) {
+	p, err := principalFrom(req.Extra)
+	if err != nil {
+		return errorResult(err), nil, nil
+	}
+	if ok, _ := t.scopeCreates.Allow(p.ID.String()); !ok {
+		return errorResult(memory.ErrRateLimited), nil, nil
+	}
+	sc, created, err := t.svc.EnsureScopeAs(ctx, p, in.Parent, in.Level, in.Slug, in.Name)
+	if err != nil {
+		return errorResult(err), nil, nil
+	}
+	return jsonResult(map[string]any{"scope": sc, "created": created}), nil, nil
 }

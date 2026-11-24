@@ -197,6 +197,9 @@ func TestCrossTenantRawSQL(t *testing.T) {
 		"insert embedding":        "INSERT INTO memory_embeddings (memory_id, revision, org_id, scope_id, model, dimensions, embedding) SELECT id, 1, org_id, scope_id, 'nomic-embed-text', 768, array_fill(0.1, ARRAY[768])::vector FROM memories WHERE id = $1",
 		"set org owner":           "UPDATE org_settings SET owner_principal_id = tm_principal() WHERE $1::uuid IS NOT NULL",
 		"drive promotion definer": "SELECT tm_promotion_finalize_source($1, $1)",
+		"scope under own scope":   "INSERT INTO scopes (id, org_id, parent_id, level, slug, name, depth, path, created_by) SELECT gen_random_uuid(), p.org_id, p.id, 'project', 'sneaky', 'sneaky', p.depth + 1, p.path || '/sneaky', tm_principal() FROM scopes p WHERE p.path = 'acme/platform/billing' AND $1::uuid IS NOT NULL",
+		"scope as another":        "INSERT INTO scopes (id, org_id, parent_id, level, slug, name, depth, path, created_by) SELECT gen_random_uuid(), p.org_id, p.id, 'project', 'sneaky', 'sneaky', p.depth + 1, p.path || '/sneaky', created_by FROM scopes p WHERE p.path = 'acme/platform/billing' AND $1::uuid IS NOT NULL",
+		"root scope":              "INSERT INTO scopes (id, org_id, parent_id, level, slug, name, depth, path, created_by) SELECT gen_random_uuid(), gen_random_uuid(), NULL, 'organization', 'sneaky', 'sneaky', 0, 'sneaky', tm_principal() WHERE $1::uuid IS NOT NULL",
 	}
 	for name, sql := range writes {
 		var n int64 = -1
